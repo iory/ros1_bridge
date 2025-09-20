@@ -1,0 +1,3 @@
+# Configuration for panda arm controller bridge
+ros1_action_name: "follow_joint_trajectory"
+ros2_action_name: "panda_arm_controller/follow_joint_trajectory"

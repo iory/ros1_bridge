@@ -75,6 +75,7 @@ def generate_cpp(output_path, template_dir):
         for m in data['mappings']}
     data.update(
         generate_services(rospack, message_string_pairs=message_string_pairs))
+    data.update(generate_actions(rospack))
 
     template_file = os.path.join(template_dir, 'get_mappings.cpp.em')
     output_file = os.path.join(output_path, 'get_mappings.cpp')
@@ -239,6 +240,17 @@ def generate_services(rospack=None, message_string_pairs=None):
     }
 
 
+def generate_actions(rospack=None):
+    ros1_actions = get_ros1_actions(rospack=rospack)
+    ros2_pkgs, ros2_actions = get_ros2_actions()
+    actions = determine_common_actions(ros1_actions, ros2_actions)
+    return {
+        'actions': actions,
+        'ros2_package_names_action': ros2_pkgs,
+        'all_ros2_actions': ros2_actions,
+    }
+
+
 def get_ros1_messages(rospack=None):
     if not rospack:
         rospack = rospkg.RosPack()
@@ -264,6 +276,9 @@ def get_ros2_messages():
         in ament_index_python.get_resources('ros1_bridge_foreign_mapping').items()
     })
     for package_name, val_tuple in resources.items():
+        # Skip problematic packages
+        if package_name in ['moveit_msgs', 'controller_manager_msgs']:
+            continue
         prefix_path, resource_type = val_tuple
         if resource_type == 'rosidl_interfaces':  # Required, otherwise linking fails
             pkgs.append(package_name)
@@ -326,6 +341,9 @@ def get_ros2_services():
     })
     resource_type = 'rosidl_interfaces'
     for package_name, val_tuple in resources.items():
+        # Skip problematic packages
+        if package_name in ['moveit_msgs', 'controller_manager_msgs']:
+            continue
         prefix_path, resource_type = val_tuple
         if resource_type == 'rosidl_interfaces':  # Required, otherwise linking fails
             pkgs.append(package_name)
@@ -361,6 +379,74 @@ def get_ros2_services():
                     except Exception as e:  # noqa: B902
                         print('%s' % str(e), file=sys.stderr)
     return pkgs, srvs, rules
+
+
+def get_ros1_actions(rospack=None):
+    if not rospack:
+        rospack = rospkg.RosPack()
+    actions = []
+    try:
+        pkg_names = rospack.list()
+        for pkg_name in pkg_names:
+            pkg_path = rospack.get_path(pkg_name)
+            action_path = os.path.join(pkg_path, 'action')
+            if os.path.isdir(action_path):
+                for action_file in os.listdir(action_path):
+                    if action_file.endswith('.action'):
+                        action_name = action_file[:-7]
+                        actions.append(Message(pkg_name, action_name, action_path))
+    except Exception:
+        pass
+    return actions
+
+
+def get_ros2_actions():
+    pkgs = []
+    actions = []
+    resources = {
+        key: (val, 'rosidl_interfaces') for key, val
+        in ament_index_python.get_resources('rosidl_interfaces').items()
+    }
+    resources.update({
+        key: (val, 'ros1_bridge_foreign_mapping') for key, val
+        in ament_index_python.get_resources('ros1_bridge_foreign_mapping').items()
+    })
+    for package_name, val_tuple in resources.items():
+        # Skip problematic packages
+        if package_name in ['moveit_msgs', 'controller_manager_msgs']:
+            continue
+        prefix_path, resource_type = val_tuple
+        if resource_type == 'rosidl_interfaces':
+            pkgs.append(package_name)
+        resource, _ = ament_index_python.get_resource(resource_type, package_name)
+        interfaces = resource.splitlines()
+        action_names = {
+            i[7:-4]
+            for i in interfaces
+            if i.startswith('action/') and i[-4:] in ('.idl', '.action')}
+
+        for action_name in sorted(action_names):
+            actions.append(Message(package_name, action_name, prefix_path))
+    return pkgs, actions
+
+
+def determine_common_actions(ros1_actions, ros2_actions):
+    pairs = []
+    actions = []
+    for ros1_action in ros1_actions:
+        for ros2_action in ros2_actions:
+            if ros1_action.package_name == ros2_action.package_name:
+                if ros1_action.message_name == ros2_action.message_name:
+                    pairs.append((ros1_action, ros2_action))
+
+    for pair in pairs:
+        actions.append({
+            'ros1_name': pair[0].message_name,
+            'ros2_name': pair[1].message_name,
+            'ros1_package': pair[0].package_name,
+            'ros2_package': pair[1].package_name,
+        })
+    return actions
 
 
 class Message:

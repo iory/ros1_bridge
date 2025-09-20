@@ -16,6 +16,10 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rmw_implementation_cmake REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(example_interfaces REQUIRED)
+find_package(control_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 
 # find ROS 1 packages
 set(cmake_extras_files cmake/find_ros1_package.cmake cmake/find_ros1_interface_packages.cmake)
@@ -43,6 +47,9 @@ if(NOT ros1_roscpp_FOUND)
 endif()
 
 find_ros1_package(std_msgs REQUIRED)
+find_ros1_package(actionlib REQUIRED)
+find_ros1_package(control_msgs REQUIRED)
+find_ros1_package(trajectory_msgs REQUIRED)
 
 # Dependency that we should only look for if ROS 1 is installed (it's not present on a ROS 2
 # system; see https://github.com/ros2/ros1_bridge/pull/331#issuecomment-1188111510)
@@ -56,7 +63,8 @@ set(prefixed_ros1_message_packages "")
 foreach(ros1_message_package ${ros1_message_packages})
   # TODO(karsten1987): This is currently a workaround to work with ROS 2 classloader
   # rather than ROS 1 classloader.
-  if(NOT "${ros1_message_package}" STREQUAL "nodelet")
+  if(NOT "${ros1_message_package}" STREQUAL "nodelet" AND
+     NOT "${ros1_message_package}" STREQUAL "moveit_msgs")
     find_ros1_package(${ros1_message_package} REQUIRED)
     list(APPEND prefixed_ros1_message_packages "ros1_${ros1_message_package}")
   endif()
@@ -133,6 +141,8 @@ list(APPEND generated_files "${generated_path}/get_mappings.cpp")
 
 # generate per interface compilation units to keep the memory usage low
 ament_index_get_resources(ros2_interface_packages "rosidl_interfaces")
+# Remove problematic packages from the list
+list(REMOVE_ITEM ros2_interface_packages "moveit_msgs" "controller_manager_msgs")
 # actionlib_msgs is deprecated, but we will quiet the warning until the bridge has support for
 # ROS actions: https://github.com/ros2/design/issues/195
 set(actionlib_msgs_DEPRECATED_QUIET TRUE)
@@ -169,8 +179,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_custom_command(
   OUTPUT ${generated_files}
-  COMMAND Python3::Interpreter
-  ARGS bin/ros1_bridge_generate_factories
+  COMMAND ${Python3_EXECUTABLE} bin/ros1_bridge_generate_factories
     --output-path "${generated_path}" --template-dir resource
   DEPENDS ${target_dependencies}
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -226,6 +235,7 @@ ament_target_dependencies(${PROJECT_NAME}
   ${prefixed_ros1_message_packages}
   ${ros2_interface_packages}
   "rclcpp"
+  "rclcpp_action"
   "ros1_roscpp"
   "ros1_std_msgs")
 
@@ -240,6 +250,13 @@ custom_executable(static_bridge
   TARGET_DEPENDENCIES ${ros2_interface_packages})
 target_link_libraries(static_bridge
   ${PROJECT_NAME})
+
+# custom_executable(action_bridge
+#   "src/action_bridge.cpp"
+#   ROS1_DEPENDENCIES
+#   TARGET_DEPENDENCIES ${ros2_interface_packages})
+# target_link_libraries(action_bridge
+#   ${PROJECT_NAME})
 
 custom_executable(parameter_bridge
   "src/parameter_bridge.cpp"
@@ -331,3 +348,59 @@ install(
   DIRECTORY resource
   DESTINATION share/${PROJECT_NAME}
 )
+
+# ROS2 only action test program (works without ROS1)
+add_executable(ros2_action_test "src/ros2_action_test.cpp")
+ament_target_dependencies(ros2_action_test
+  "rclcpp"
+  "rclcpp_action"
+  "example_interfaces")
+
+install(TARGETS ros2_action_test
+  DESTINATION lib/${PROJECT_NAME})
+
+# Follow Joint Trajectory bridge (ROS1 server -> ROS2 client)
+add_executable(follow_joint_trajectory_bridge "src/follow_joint_trajectory_bridge.cpp")
+ament_target_dependencies(follow_joint_trajectory_bridge
+  "rclcpp"
+  "rclcpp_action"
+  "control_msgs"
+  "trajectory_msgs"
+  "ros1_roscpp"
+  "ros1_actionlib"
+  "ros1_control_msgs"
+  "ros1_trajectory_msgs")
+
+# Link ROS1 actionlib library explicitly
+target_link_libraries(follow_joint_trajectory_bridge
+  ${ros1_actionlib_LIBRARIES}
+  ${ros1_roscpp_LIBRARIES}
+  ${ros1_control_msgs_LIBRARIES})
+
+install(TARGETS follow_joint_trajectory_bridge
+  DESTINATION lib/${PROJECT_NAME})
+
+# Follow Joint Trajectory auto bridge (automatic discovery)
+add_executable(follow_joint_trajectory_auto_bridge "src/follow_joint_trajectory_auto_bridge.cpp")
+ament_target_dependencies(follow_joint_trajectory_auto_bridge
+  "rclcpp"
+  "rclcpp_action"
+  "control_msgs"
+  "trajectory_msgs"
+  "ros1_roscpp"
+  "ros1_actionlib"
+  "ros1_control_msgs"
+  "ros1_trajectory_msgs")
+
+# Link ROS1 actionlib library explicitly
+target_link_libraries(follow_joint_trajectory_auto_bridge
+  ${ros1_actionlib_LIBRARIES}
+  ${ros1_roscpp_LIBRARIES}
+  ${ros1_control_msgs_LIBRARIES})
+
+install(TARGETS follow_joint_trajectory_auto_bridge
+  DESTINATION lib/${PROJECT_NAME})
+
+# Install launch files
+install(DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}/launch)
