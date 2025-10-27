@@ -1,6 +1,9 @@
 name: CI
 
-on: [push, pull_request] # on all pushes and PRs
+on:
+  push:
+  pull_request:
+  workflow_dispatch: # Allow manual trigger from GitHub UI
 
 jobs:
   ros1_bridge:
