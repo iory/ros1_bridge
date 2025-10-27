@@ -68,6 +68,8 @@ if(BUILD_TESTING)
   find_package(diagnostic_msgs REQUIRED)
   find_ros1_package(diagnostic_msgs)
   find_ros1_package(roslaunch)
+  # Skip pep257 test due to compatibility issues with Python 3.8 and ament_pep257 0.11.4
+  set(ament_cmake_pep257_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
   if(ros1_diagnostic_msgs_FOUND AND ros1_roslaunch_FOUND)
     # ensure that the ROS 2 diagnostic_msgs was found by find_package
@@ -217,11 +219,19 @@ custom_executable(simple_bridge "src/simple_bridge.cpp"
   ROS1_DEPENDENCIES
   TARGET_DEPENDENCIES "std_msgs")
 
+# Check if controller_manager_msgs is available in ROS1
+find_ros1_package(controller_manager_msgs)
+if(ros1_controller_manager_msgs_FOUND)
+  set(controller_state_adapter_src "src/controller_manager_msgs_controller_state_adapter.cpp")
+else()
+  set(controller_state_adapter_src "")
+endif()
+
 add_library(${PROJECT_NAME} SHARED
   "src/builtin_interfaces_factories.cpp"
   "src/convert_builtin_interfaces.cpp"
   "src/bridge.cpp"
-  "src/controller_manager_msgs_controller_state_adapter.cpp"
+  ${controller_state_adapter_src}
   ${generated_files})
 ament_target_dependencies(${PROJECT_NAME}
   ${prefixed_ros1_message_packages}
