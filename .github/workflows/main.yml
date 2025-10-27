@@ -39,7 +39,7 @@ jobs:
           required-ros-distributions: "${{ matrix.ros1_distro }} ${{ matrix.ros2_distro }}"
 
       - name: Build and test ros1-bridge
-        uses: ros-tooling/action-ros-ci@v0.2
+        uses: iory/action-ros-ci@add-ros-one-support
         with:
           package-name: ros1_bridge
           target-ros1-distro: ${{ matrix.ros1_distro }}
