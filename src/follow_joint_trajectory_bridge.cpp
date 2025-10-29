@@ -261,7 +261,10 @@ int main(int argc, char** argv)
   std::vector<std::string> args;
   std::vector<std::string> ros2_args;
   bool is_ros2_arg = false;
-  
+
+  // Extract ROS1 node name from ROS2 args if provided
+  std::string ros1_node_name = "follow_joint_trajectory_bridge";
+
   for (int i = 0; i < argc; ++i) {
     std::string arg(argv[i]);
     if (arg == "--ros-args") {
@@ -269,18 +272,28 @@ int main(int argc, char** argv)
       ros2_args.push_back(argv[i]);
     } else if (is_ros2_arg) {
       ros2_args.push_back(argv[i]);
+      // Look for ros1_node_name parameter
+      if (arg == "-p" && i + 1 < argc) {
+        std::string next_arg(argv[i + 1]);
+        if (next_arg.find("ros1_node_name:=") == 0) {
+          ros1_node_name = next_arg.substr(16);  // Extract value after "ros1_node_name:="
+          // Skip the next argument since we already processed it
+          ++i;
+          ros2_args.push_back(argv[i]);
+        }
+      }
     } else {
       args.push_back(argv[i]);
     }
   }
-  
+
   // Convert back to char* for ROS1
   std::vector<char*> ros1_argv;
   for (auto& arg : args) {
     ros1_argv.push_back(const_cast<char*>(arg.c_str()));
   }
   int ros1_argc = ros1_argv.size();
-  
+
   // Convert back to char* for ROS2
   std::vector<char*> ros2_argv;
   if (ros2_args.empty()) {
@@ -292,24 +305,24 @@ int main(int argc, char** argv)
     }
   }
   int ros2_argc = ros2_argv.size();
-  
-  // Initialize ROS1
-  ros::init(ros1_argc, ros1_argv.data(), "follow_joint_trajectory_bridge");
-  
+
+  // Initialize ROS1 with the specified node name
+  ros::init(ros1_argc, ros1_argv.data(), ros1_node_name);
+
   // Initialize ROS2
   rclcpp::init(ros2_argc, ros2_argv.data());
-  
+
   auto bridge_node = std::make_shared<FollowJointTrajectoryBridge>();
-  
+
   // Spin both ROS1 and ROS2
   ros::AsyncSpinner ros1_spinner(1);
   ros1_spinner.start();
-  
+
   rclcpp::spin(bridge_node);
-  
+
   ros1_spinner.stop();
   rclcpp::shutdown();
   ros::shutdown();
-  
+
   return 0;
 }
