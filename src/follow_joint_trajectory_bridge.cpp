@@ -257,60 +257,16 @@ private:
 
 int main(int argc, char** argv)
 {
-  // Separate arguments for ROS1 and ROS2
-  std::vector<std::string> args;
-  std::vector<std::string> ros2_args;
-  bool is_ros2_arg = false;
+  // Initialize ROS2 first to read parameters
+  rclcpp::init(argc, argv);
 
-  // Extract ROS1 node name from ROS2 args if provided
-  std::string ros1_node_name = "follow_joint_trajectory_bridge";
+  // Create a temporary node to read the ros1_node_name parameter
+  auto temp_node = rclcpp::Node::make_shared("temp_node_for_param");
+  temp_node->declare_parameter("ros1_node_name", "follow_joint_trajectory_bridge");
+  std::string ros1_node_name = temp_node->get_parameter("ros1_node_name").as_string();
 
-  for (int i = 0; i < argc; ++i) {
-    std::string arg(argv[i]);
-    if (arg == "--ros-args") {
-      is_ros2_arg = true;
-      ros2_args.push_back(argv[i]);
-    } else if (is_ros2_arg) {
-      ros2_args.push_back(argv[i]);
-      // Look for ros1_node_name parameter
-      if (arg == "-p" && i + 1 < argc) {
-        std::string next_arg(argv[i + 1]);
-        if (next_arg.find("ros1_node_name:=") == 0) {
-          ros1_node_name = next_arg.substr(16);  // Extract value after "ros1_node_name:="
-          // Skip the next argument since we already processed it
-          ++i;
-          ros2_args.push_back(argv[i]);
-        }
-      }
-    } else {
-      args.push_back(argv[i]);
-    }
-  }
-
-  // Convert back to char* for ROS1
-  std::vector<char*> ros1_argv;
-  for (auto& arg : args) {
-    ros1_argv.push_back(const_cast<char*>(arg.c_str()));
-  }
-  int ros1_argc = ros1_argv.size();
-
-  // Convert back to char* for ROS2
-  std::vector<char*> ros2_argv;
-  if (ros2_args.empty()) {
-    ros2_argv.push_back(const_cast<char*>(args[0].c_str()));
-  } else {
-    ros2_argv.push_back(const_cast<char*>(args[0].c_str()));
-    for (auto& arg : ros2_args) {
-      ros2_argv.push_back(const_cast<char*>(arg.c_str()));
-    }
-  }
-  int ros2_argc = ros2_argv.size();
-
-  // Initialize ROS1 with the specified node name
-  ros::init(ros1_argc, ros1_argv.data(), ros1_node_name);
-
-  // Initialize ROS2
-  rclcpp::init(ros2_argc, ros2_argv.data());
+  // Now initialize ROS1 with the correct node name
+  ros::init(argc, argv, ros1_node_name);
 
   auto bridge_node = std::make_shared<FollowJointTrajectoryBridge>();
 
