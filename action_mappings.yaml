@@ -1,0 +1,3 @@
+-
+  ros1_action_name: 'FollowJointTrajectoryAction'
+  ros2_action_name: 'action/FollowJointTrajectory'
