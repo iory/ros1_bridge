@@ -89,9 +89,11 @@ if(BUILD_TESTING)
   find_package(geometry_msgs REQUIRED)
   find_package(std_msgs REQUIRED)
   find_package(sensor_msgs REQUIRED)
+  find_package(example_interfaces REQUIRED)
   find_ros1_package(geometry_msgs)
   find_ros1_package(std_msgs)
   find_ros1_package(sensor_msgs)
+  find_ros1_package(actionlib_tutorials)
   if(ros1_geometry_msgs_FOUND AND ros1_sensor_msgs_FOUND AND ros1_std_msgs_FOUND)
     ament_add_gtest(test_convert_generic test/test_convert_generic.cpp)
     ament_target_dependencies(test_convert_generic
@@ -278,6 +280,17 @@ if(TEST_ROS1_BRIDGE)
   set(TEST_BRIDGE_DYNAMIC_BRIDGE "$<TARGET_FILE:dynamic_bridge>")
   set(TEST_BRIDGE_ROS2_CLIENT "$<TARGET_FILE:test_ros2_client_cpp>")
   set(TEST_BRIDGE_ROS2_SERVER "$<TARGET_FILE:test_ros2_server_cpp>")
+
+  # Action test executables
+  if(ros1_actionlib_tutorials_FOUND)
+    custom_executable(test_ros2_action_client_cpp "test/test_ros2_action_client.cpp")
+    ament_target_dependencies("test_ros2_action_client_cpp${target_suffix}" "example_interfaces" "rclcpp_action")
+    custom_executable(test_ros2_action_server_cpp "test/test_ros2_action_server.cpp")
+    ament_target_dependencies("test_ros2_action_server_cpp${target_suffix}" "example_interfaces" "rclcpp_action")
+
+    set(TEST_BRIDGE_ROS2_ACTION_CLIENT "$<TARGET_FILE:test_ros2_action_client_cpp>")
+    set(TEST_BRIDGE_ROS2_ACTION_SERVER "$<TARGET_FILE:test_ros2_action_server_cpp>")
+  endif()
 endif()
 
 macro(targets)
@@ -312,6 +325,23 @@ macro(targets)
     TARGET test_services_across_dynamic_bridge${target_suffix}
     ENV RMW_IMPLEMENTATION=${rmw_implementation}
     TIMEOUT 60)
+
+  if(ros1_actionlib_tutorials_FOUND)
+    configure_file(
+      test/test_actions_across_dynamic_bridge.py.in
+      test_actions_across_dynamic_bridge${target_suffix}.py.genexp
+      @ONLY
+    )
+    file(GENERATE
+      OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/test_actions_across_dynamic_bridge${target_suffix}_$<CONFIG>.py"
+      INPUT "${CMAKE_CURRENT_BINARY_DIR}/test_actions_across_dynamic_bridge${target_suffix}.py.genexp"
+    )
+    add_launch_test(
+      "${CMAKE_CURRENT_BINARY_DIR}/test_actions_across_dynamic_bridge${target_suffix}_$<CONFIG>.py"
+      TARGET test_actions_across_dynamic_bridge${target_suffix}
+      ENV RMW_IMPLEMENTATION=${rmw_implementation}
+      TIMEOUT 60)
+  endif()
 endmacro()
 
 if(TEST_ROS1_BRIDGE)
@@ -325,6 +355,16 @@ if(TEST_ROS1_BRIDGE)
   set(TEST_BRIDGE_ROSCORE "${ros1_roslaunch_PREFIX}/bin/roscore")
   set(TEST_BRIDGE_ROS1_CLIENT "$<TARGET_FILE:test_ros1_client>")
   set(TEST_BRIDGE_ROS1_SERVER "$<TARGET_FILE:test_ros1_server>")
+
+  # ROS1 action test executables
+  if(ros1_actionlib_tutorials_FOUND)
+    add_executable(test_ros1_action_client "test/test_ros1_action_client.cpp")
+    ament_target_dependencies(test_ros1_action_client "ros1_actionlib_tutorials" "ros1_roscpp")
+    add_executable(test_ros1_action_server "test/test_ros1_action_server.cpp")
+    ament_target_dependencies(test_ros1_action_server "ros1_actionlib_tutorials" "ros1_roscpp")
+    set(TEST_BRIDGE_ROS1_ACTION_CLIENT "$<TARGET_FILE:test_ros1_action_client>")
+    set(TEST_BRIDGE_ROS1_ACTION_SERVER "$<TARGET_FILE:test_ros1_action_server>")
+  endif()
 
   call_for_each_rmw_implementation(targets)
 endif()
