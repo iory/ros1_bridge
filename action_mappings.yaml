@@ -1,0 +1,20 @@
+-
+  ros1_package_name: 'control_msgs'
+  ros1_action_name: 'FollowJointTrajectory'
+  ros2_package_name: 'control_msgs'
+  ros2_action_name: 'FollowJointTrajectory'
+  enable_foreign_mappings: true
+  goal_fields_1_to_2:
+    trajectory: trajectory
+    path_tolerance: path_tolerance
+    goal_tolerance: goal_tolerance
+    goal_time_tolerance: goal_time_tolerance
+  result_fields_1_to_2:
+    error_code: error_code
+    error_string: error_string
+  feedback_fields_1_to_2:
+    header: header
+    joint_names: joint_names
+    desired: desired
+    actual: actual
+    error: error
