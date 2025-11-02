@@ -1,3 +1,5 @@
 -
-  ros1_action_name: 'FollowJointTrajectoryAction'
-  ros2_action_name: 'action/FollowJointTrajectory'
+  ros1_package_name: 'control_msgs'
+  ros1_action_name: 'FollowJointTrajectory'
+  ros2_package_name: 'control_msgs'
+  ros2_action_name: 'FollowJointTrajectory'
