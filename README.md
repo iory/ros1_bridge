@@ -22,15 +22,40 @@ Run `ros2 run ros1_bridge dynamic_bridge -- --help` for more options.
 > ⚠️ **Important Compatibility Notice**
 
 - `ros1_bridge` **requires ROS 1**, which has reached [end-of-life (EOL)](https://www.ros.org/reps/rep-0003.html#noetic-ninjemys-may-2020-may-2025) as of **May 2025** for ROS Noetic.
-- Ubuntu **24.04 LTS** does **not support ROS 1**, and therefore is **not compatible** with `ros1_bridge`.
+- Ubuntu **24.04 LTS** does **not officially support ROS 1** through standard repositories, but **ROS-O (ROS One)** provides community-maintained packages for extended compatibility.
 
 | Ubuntu Version | Supported ROS 1 Versions  | Supported ROS 2 Versions              | `ros1_bridge` Support            |
 |----------------|----------------|---------------------------------------|----------------------------------|
 | 20.04 (Focal)  | Noetic Ninjemys   | Foxy Fitzroy (EOL), Galactic Geochelone (EOL), Humble Hawksbill    | ✅ Full support                  |
-| 22.04 (Jammy)  | ⚠️ Partial (unsupported officially) | Humble Hawksbill, Iron Irwini | ⚠️ Requires building from source |
-| 24.04 (Noble)  | ❌ Not available | Jazzy Jalisco, Kilted Kaiju          | ❌ Not supported                 |
+| 22.04 (Jammy)  | ROS-O (community) | Humble Hawksbill, Iron Irwini | ✅ Supported via ROS-O |
+| 24.04 (Noble)  | ROS-O (community) | Jazzy Jalisco, Kilted Kaiju          | ✅ Supported via ROS-O                 |
 
-To use `ros1_bridge`, you must use a system where both ROS 1 and ROS 2 are installable and buildable. Mixing ROS distributions across unsupported Ubuntu versions is **not recommended** and may lead to broken builds or missing dependencies.
+### Using ROS-O for Ubuntu 22.04 and 24.04
+
+[ROS-O (ROS One)](https://github.com/ros-o) is a community-maintained distribution that provides ROS 1 packages for Ubuntu 22.04 (Jammy) and Ubuntu 24.04 (Noble). To install ROS-O:
+
+**For Ubuntu 22.04 (Jammy):**
+```bash
+sudo sh -c 'echo "deb http://ros.packages.techfak.net/dists/jammy/ jammy main" > /etc/apt/sources.list.d/ros-one-latest.list'
+wget http://ros.packages.techfak.net/repos.key -O - | sudo apt-key add -
+sudo apt update
+sudo apt install ros-one-desktop-full
+```
+
+**For Ubuntu 24.04 (Noble):**
+```bash
+sudo sh -c 'echo "deb http://ros.packages.techfak.net/dists/noble/ noble main" > /etc/apt/sources.list.d/ros-one-latest.list'
+wget http://ros.packages.techfak.net/repos.key -O - | sudo apt-key add -
+sudo apt update
+sudo apt install ros-one-desktop-full
+```
+
+After installing ROS-O, source the ROS-O environment:
+```bash
+source /opt/ros/one/setup.bash
+```
+
+To use `ros1_bridge`, you must use a system where both ROS 1 (or ROS-O) and ROS 2 are installable and buildable. Mixing ROS distributions across unsupported Ubuntu versions is **not recommended** and may lead to broken builds or missing dependencies.
 
 ## Prerequisites
 
@@ -517,3 +542,38 @@ topics:
 ```
 
 Note that the `qos` section can be omitted entirely and options not set are left default.
+
+## Action Bridging
+
+In addition to topics and services, `ros1_bridge` supports bridging ROS actions between ROS 1 (using `actionlib`) and ROS 2 (using `rclcpp_action`). The bridge automatically discovers and bridges compatible actions when using `dynamic_bridge`.
+
+### Automatic Action Discovery
+
+The bridge automatically discovers actions that have compatible interfaces in both ROS 1 and ROS 2. To see which actions are supported:
+
+```bash
+# Show all supported action types
+$ ros2 run ros1_bridge dynamic_bridge --print-pairs | grep -A 2 "/action/"
+  - 'control_msgs/action/FollowJointTrajectory' (ROS 2) <=> 'control_msgs/FollowJointTrajectory' (ROS 1)
+  - 'control_msgs/action/GripperCommand' (ROS 2) <=> 'control_msgs/GripperCommand' (ROS 1)
+  - 'control_msgs/action/JointTrajectory' (ROS 2) <=> 'control_msgs/JointTrajectory' (ROS 1)
+  - 'control_msgs/action/PointHead' (ROS 2) <=> 'control_msgs/PointHead' (ROS 1)
+  - 'control_msgs/action/SingleJointPosition' (ROS 2) <=> 'control_msgs/SingleJointPosition' (ROS 1)
+  - 'tf2_msgs/action/LookupTransform' (ROS 2) <=> 'tf2_msgs/LookupTransform' (ROS 1)
+```
+
+### Running the Dynamic Bridge with Actions
+
+Actions are bridged automatically when you run `dynamic_bridge`:
+
+```bash
+# Bridge all topics, services, and actions
+ros2 run ros1_bridge dynamic_bridge --bridge-all-topics
+```
+
+The bridge will automatically:
+1. Discover compatible action types in both ROS 1 and ROS 2
+2. Monitor for active action servers and clients
+3. Create bidirectional bridges when matching server-client pairs are detected
+4. Bridge goal requests, feedback, and results between ROS 1 and ROS 2
+
