@@ -352,3 +352,7 @@ install(
   DIRECTORY resource
   DESTINATION share/${PROJECT_NAME}
 )
+install(
+  FILES action_mappings.yaml
+  DESTINATION share/${PROJECT_NAME}
+)

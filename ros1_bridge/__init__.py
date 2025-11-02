@@ -432,6 +432,31 @@ def get_ros2_actions():
     pkgs = []
     actions = []
     rules = []
+
+    # First, check for local action_mappings.yaml in the current package being built
+    # This is needed because during build, ros1_bridge itself is not yet in the ament index
+    local_mapping_file = os.path.join(os.path.dirname(__file__), '..', 'action_mappings.yaml')
+    if os.path.exists(local_mapping_file):
+        print(f"Loading local action mappings from: {local_mapping_file}", file=sys.stderr)
+        try:
+            with open(local_mapping_file, 'r') as h:
+                content = yaml.safe_load(h)
+            if isinstance(content, list):
+                for data in content:
+                    if (all(n not in data for n in ('ros1_message_name', 'ros2_message_name',
+                            'ros1_service_name', 'ros2_service_name'))):
+                        try:
+                            rules.append(ActionMappingRule(data, 'ros1_bridge'))
+                            print(f"Loaded local action mapping rule: {data.get('ros1_action_name', 'unknown')}", file=sys.stderr)
+                        except Exception as e:
+                            print('%s' % str(e), file=sys.stderr)
+            else:
+                print(
+                    "The content of the local mapping rules in '%s' is not a list" % local_mapping_file,
+                    file=sys.stderr)
+        except Exception as e:
+            print(f"Error loading local action mappings: {e}", file=sys.stderr)
+
     resource_type = 'rosidl_interfaces'
     resources = ament_index_python.get_resources(resource_type)
     for package_name, prefix_path in resources.items():
@@ -838,12 +863,16 @@ def determine_common_actions(
         message_string_pairs = set()
 
     pairs = []
+    pair_rules = {}  # Track which rule applies to each pair
     actions = []
     for ros1_action in ros1_actions:
         for ros2_action in ros2_actions:
             if ros1_action.package_name == ros2_action.package_name:
                 if ros1_action.message_name == ros2_action.message_name:
+                    pair_key = (ros1_action.package_name, ros1_action.message_name,
+                               ros2_action.package_name, ros2_action.message_name)
                     pairs.append((ros1_action, ros2_action))
+                    pair_rules[pair_key] = None
 
     for rule in mapping_rules:
         for ros1_action in ros1_actions:
@@ -852,17 +881,29 @@ def determine_common_actions(
                    rule.ros2_package_name == ros2_action.package_name:
                     if rule.ros1_action_name is None and rule.ros2_action_name is None:
                         if ros1_action.message_name == ros2_action.message_name:
-                            pairs.append((ros1_action, ros2_action))
+                            pair_key = (ros1_action.package_name, ros1_action.message_name,
+                                       ros2_action.package_name, ros2_action.message_name)
+                            if pair_key not in pair_rules:
+                                pairs.append((ros1_action, ros2_action))
+                            pair_rules[pair_key] = rule
                     else:
                         if (
                             rule.ros1_action_name == ros1_action.message_name and
                             rule.ros2_action_name == ros2_action.message_name
                         ):
-                            pairs.append((ros1_action, ros2_action))
+                            pair_key = (ros1_action.package_name, ros1_action.message_name,
+                                       ros2_action.package_name, ros2_action.message_name)
+                            if pair_key not in pair_rules:
+                                pairs.append((ros1_action, ros2_action))
+                            pair_rules[pair_key] = rule
 
     for pair in pairs:
         ros1_spec = load_ros1_action(pair[0])
         ros2_spec = load_ros2_action(pair[1])
+        pair_key = (pair[0].package_name, pair[0].message_name,
+                   pair[1].package_name, pair[1].message_name)
+        rule = pair_rules.get(pair_key)
+
         ros1_fields = {
             'goal': ros1_spec.goal.fields(),
             'result': ros1_spec.result.fields(),
@@ -879,10 +920,62 @@ def determine_common_actions(
             'feedback': []
         }
         match = True
+
+        # Check if rule has custom field mappings
+        has_field_mapping = (rule and
+                            (rule.goal_fields_1_to_2 or
+                             rule.result_fields_1_to_2 or
+                             rule.feedback_fields_1_to_2))
+
         for direction in ['goal', 'result', 'feedback']:
-            if len(ros1_fields[direction]) != len(ros2_fields[direction]):
-                match = False
-                break
+            # Get custom field mapping for this direction if it exists
+            field_mapping = None
+            if rule:
+                if direction == 'goal' and rule.goal_fields_1_to_2:
+                    field_mapping = rule.goal_fields_1_to_2
+                elif direction == 'result' and rule.result_fields_1_to_2:
+                    field_mapping = rule.result_fields_1_to_2
+                elif direction == 'feedback' and rule.feedback_fields_1_to_2:
+                    field_mapping = rule.feedback_fields_1_to_2
+
+            # Skip field count check if custom mapping exists
+            if not field_mapping:
+                if len(ros1_fields[direction]) != len(ros2_fields[direction]):
+                    match = False
+                    break
+
+            # If we have custom field mapping, only process mapped fields
+            if field_mapping:
+                # Build lookup dictionaries
+                ros1_field_dict = {f[1]: f for f in ros1_fields[direction]}
+                ros2_field_dict = {f.name: f for f in ros2_fields[direction]}
+
+                for ros1_name, ros2_name in field_mapping.items():
+                    if ros1_name not in ros1_field_dict or ros2_name not in ros2_field_dict:
+                        match = False
+                        break
+                    ros1_field = ros1_field_dict[ros1_name]
+                    ros2_field = ros2_field_dict[ros2_name]
+                    ros1_type = ros1_field[0]
+                    ros2_type = str(ros2_field.type)
+
+                    output[direction].append({
+                        'basic': False if '/' in ros1_type else True,
+                        'array': True if '[]' in ros1_type else False,
+                        'ros1': {
+                            'name': ros1_name,
+                            'type': ros1_type.rstrip('[]'),
+                            'cpptype': ros1_type.rstrip('[]').replace('/', '::')
+                        },
+                        'ros2': {
+                            'name': ros2_name,
+                            'type': ros2_type.rstrip('[]'),
+                            'cpptype': ros2_type.rstrip('[]').replace('/', '::msg::')
+                        }
+                    })
+                continue
+
+            # Original processing for non-mapped fields
             for i, ros1_field in enumerate(ros1_fields[direction]):
                 ros1_type = ros1_field[0]
                 ros2_type = str(ros2_fields[direction][i].type)
