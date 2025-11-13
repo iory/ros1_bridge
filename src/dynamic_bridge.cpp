@@ -52,6 +52,8 @@ std::set<std::string> g_actions_1to2_pending_removal;
 std::set<std::string> g_actions_2to1_pending_removal;
 std::set<std::string> g_services_1to2_pending_removal;
 std::set<std::string> g_services_2to1_pending_removal;
+std::set<std::string> g_topics_1to2_pending_removal;
+std::set<std::string> g_topics_2to1_pending_removal;
 
 enum class BridgeDirection
 {
@@ -356,6 +358,52 @@ void update_bridge(
     }
   }
 
+  // Process topics 1to2
+  for (auto it = g_topics_1to2_pending_removal.begin();
+    it != g_topics_1to2_pending_removal.end(); )
+  {
+    auto bridge_it = bridges_1to2.find(*it);
+    if (bridge_it != bridges_1to2.end()) {
+      // Re-check: Is it still missing?
+      if (
+        ros1_publishers.find(*it) == ros1_publishers.end() ||
+        (!bridge_all_1to2_topics && ros2_subscribers.find(*it) == ros2_subscribers.end()))
+      {
+        printf("Executing deferred removal of 1to2 bridge for topic %s\n", it->c_str());
+        bridges_1to2.erase(bridge_it);
+        it = g_topics_1to2_pending_removal.erase(it);
+      } else {
+        // Restored
+        it = g_topics_1to2_pending_removal.erase(it);
+      }
+    } else {
+      it = g_topics_1to2_pending_removal.erase(it);
+    }
+  }
+
+  // Process topics 2to1
+  for (auto it = g_topics_2to1_pending_removal.begin();
+    it != g_topics_2to1_pending_removal.end(); )
+  {
+    auto bridge_it = bridges_2to1.find(*it);
+    if (bridge_it != bridges_2to1.end()) {
+      // Re-check: Is it still missing?
+      if (
+        (!bridge_all_2to1_topics && ros1_subscribers.find(*it) == ros1_subscribers.end()) ||
+        ros2_publishers.find(*it) == ros2_publishers.end())
+      {
+        printf("Executing deferred removal of 2to1 bridge for topic %s\n", it->c_str());
+        bridges_2to1.erase(bridge_it);
+        it = g_topics_2to1_pending_removal.erase(it);
+      } else {
+        // Restored
+        it = g_topics_2to1_pending_removal.erase(it);
+      }
+    } else {
+      it = g_topics_2to1_pending_removal.erase(it);
+    }
+  }
+
   // Helper lambda to check if topic is allowed based on config
   auto is_topic_allowed_1to2 = [&config](const std::string & topic_name) {
     if (!config.filter_enabled) {
@@ -534,35 +582,39 @@ void update_bridge(
       topic_name.c_str(), bridge.ros2_type_name.c_str(), bridge.ros1_type_name.c_str());
   }
 
-  // remove obsolete bridges
-  std::vector<std::string> to_be_removed_1to2;
+  // Mark obsolete topic bridges for deferred removal
   for (auto it : bridges_1to2) {
     std::string topic_name = it.first;
     if (
       ros1_publishers.find(topic_name) == ros1_publishers.end() ||
       (!bridge_all_1to2_topics && ros2_subscribers.find(topic_name) == ros2_subscribers.end()))
     {
-      to_be_removed_1to2.push_back(topic_name);
+      // Add to removal list if not already present
+      if (g_topics_1to2_pending_removal.find(topic_name) == g_topics_1to2_pending_removal.end()) {
+        printf("Marking 1to2 bridge for topic '%s' for deferred removal\n", topic_name.c_str());
+        g_topics_1to2_pending_removal.insert(topic_name);
+      }
+    } else {
+      // Restored, remove from removal list
+      g_topics_1to2_pending_removal.erase(topic_name);
     }
   }
-  for (auto topic_name : to_be_removed_1to2) {
-    bridges_1to2.erase(topic_name);
-    printf("removed 1to2 bridge for topic '%s'\n", topic_name.c_str());
-  }
 
-  std::vector<std::string> to_be_removed_2to1;
   for (auto it : bridges_2to1) {
     std::string topic_name = it.first;
     if (
       (!bridge_all_2to1_topics && ros1_subscribers.find(topic_name) == ros1_subscribers.end()) ||
       ros2_publishers.find(topic_name) == ros2_publishers.end())
     {
-      to_be_removed_2to1.push_back(topic_name);
+      // Add to removal list if not already present
+      if (g_topics_2to1_pending_removal.find(topic_name) == g_topics_2to1_pending_removal.end()) {
+        printf("Marking 2to1 bridge for topic '%s' for deferred removal\n", topic_name.c_str());
+        g_topics_2to1_pending_removal.insert(topic_name);
+      }
+    } else {
+      // Restored, remove from removal list
+      g_topics_2to1_pending_removal.erase(topic_name);
     }
-  }
-  for (auto topic_name : to_be_removed_2to1) {
-    bridges_2to1.erase(topic_name);
-    printf("removed 2to1 bridge for topic '%s'\n", topic_name.c_str());
   }
 
   // Helper lambda to check if service is allowed based on config
