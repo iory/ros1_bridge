@@ -71,8 +71,45 @@ for package_path in reversed([p for p in rpp if p]):
 import rosmsg  # noqa
 
 
-def generate_cpp(output_path, template_dir):
+def save_global_data_cache(output_path, data):
+    """Save global data to a pickle cache file for parallel builds."""
+    import pickle
+    cache_file = os.path.join(output_path, '.ros1_bridge_cache.pkl')
+    # Convert Message objects to serializable format
+    cache_data = {
+        'mappings': data['mappings'],
+        'services': data['services'],
+        'actions': data['actions'],
+        'all_ros2_msgs': data['all_ros2_msgs'],
+        'all_ros2_srvs': data['all_ros2_srvs'],
+        'all_ros2_actions': data['all_ros2_actions'],
+    }
+    with open(cache_file, 'wb') as f:
+        pickle.dump(cache_data, f)
+
+
+def load_global_data_cache(output_path):
+    """Load global data from pickle cache file."""
+    import pickle
+    cache_file = os.path.join(output_path, '.ros1_bridge_cache.pkl')
+    if not os.path.exists(cache_file):
+        return None
+    try:
+        with open(cache_file, 'rb') as f:
+            return pickle.load(f)
+    except Exception:
+        return None
+
+
+def generate_cpp(output_path, template_dir, package_name=None):
     rospack = rospkg.RosPack()
+
+    # If package_name is specified, only generate for that package
+    if package_name:
+        generate_cpp_for_package(output_path, template_dir, package_name, rospack)
+        return
+
+    # Otherwise, generate global files and save cache
     data = generate_messages(rospack)
     message_string_pairs = {
         (
@@ -100,85 +137,109 @@ def generate_cpp(output_path, template_dir):
     output_file = os.path.join(output_path, 'get_factory.cpp')
     expand_template(template_file, data, output_file)
 
-    for ros2_package_name in data['ros2_package_names']:
-        data_pkg_hpp = {
-            'ros2_package_name': ros2_package_name,
-            # include directives and template types
-            'mapped_ros1_msgs': [
-                m.ros1_msg for m in data['mappings']
-                if m.ros2_msg.package_name == ros2_package_name],
-            'mapped_ros2_msgs': [
-                m.ros2_msg for m in data['mappings']
-                if m.ros2_msg.package_name == ros2_package_name],
-            # forward declaration of factory functions
-            'ros2_msg_types': [
-                m for m in data['all_ros2_msgs']
-                if m.package_name == ros2_package_name],
-            'ros2_srv_types': [
-                s for s in data['all_ros2_srvs']
-                if s.package_name == ros2_package_name],
-            'ros2_action_types': [
-                s for s in data['all_ros2_actions']
-                if s.package_name == ros2_package_name],
-            # forward declaration of template specializations
-            'mappings': [
-                m for m in data['mappings']
-                if m.ros2_msg.package_name == ros2_package_name],
-        }
-        template_file = os.path.join(template_dir, 'pkg_factories.hpp.em')
-        output_file = os.path.join(
-            output_path, '%s_factories.hpp' % ros2_package_name)
-        expand_template(template_file, data_pkg_hpp, output_file)
+    # Save cache for parallel package generation
+    save_global_data_cache(output_path, data)
 
-        data_pkg_cpp = {
-            'ros2_package_name': ros2_package_name,
-            # call interface specific factory functions
-            'ros2_msg_types': data_pkg_hpp['ros2_msg_types'],
-            'ros2_srv_types': data_pkg_hpp['ros2_srv_types'],
-            'ros2_action_types': data_pkg_hpp['ros2_action_types'],
-        }
-        template_file = os.path.join(template_dir, 'pkg_factories.cpp.em')
-        output_file = os.path.join(
-            output_path, '%s_factories.cpp' % ros2_package_name)
-        expand_template(template_file, data_pkg_cpp, output_file)
 
-        for interface_type, interfaces in zip(
-            ['msg', 'srv', 'action'], [data['all_ros2_msgs'],
-                                       data['all_ros2_srvs'], data['all_ros2_actions']]
-        ):
-            for interface in interfaces:
-                if interface.package_name != ros2_package_name:
-                    continue
-                data_idl_cpp = {
-                    'ros2_package_name': ros2_package_name,
-                    'interface_type': interface_type,
-                    'interface': interface,
-                    'mapped_msgs': [],
-                    'mapped_services': [],
-                    'mapped_actions': [],
-                }
-                if interface_type == 'msg':
-                    data_idl_cpp['mapped_msgs'] += [
-                        m for m in data['mappings']
-                        if m.ros2_msg.package_name == ros2_package_name and
-                        m.ros2_msg.message_name == interface.message_name]
-                if interface_type == 'srv':
-                    data_idl_cpp['mapped_services'] += [
-                        s for s in data['services']
-                        if s['ros2_package'] == ros2_package_name and
-                        s['ros2_name'] == interface.message_name]
-                if interface_type == 'action':
-                    data_idl_cpp['mapped_actions'] += [
-                        s for s in data['actions']
-                        if s['ros2_package'] == ros2_package_name and
-                        s['ros2_name'] == interface.message_name]
+def generate_cpp_for_package(output_path, template_dir, ros2_package_name, rospack=None):
+    """Generate C++ factory code for a specific ROS2 package."""
+    if not rospack:
+        rospack = rospkg.RosPack()
 
-                template_file = os.path.join(
-                    template_dir, 'interface_factories.cpp.em')
-                output_file = os.path.join(
-                    output_path, '%s__%s__%s__factories.cpp' %
-                    (ros2_package_name, interface_type, interface.message_name))
-                expand_template(template_file, data_idl_cpp, output_file)
+    # Load cached global data instead of regenerating
+    data = load_global_data_cache(output_path)
+    if not data:
+        # Fallback: generate all data if cache doesn't exist
+        data = generate_messages(rospack)
+        message_string_pairs = {
+            (
+                '%s/%s' % (m.ros1_msg.package_name, m.ros1_msg.message_name),
+                '%s/%s' % (m.ros2_msg.package_name, m.ros2_msg.message_name))
+            for m in data['mappings']}
+        data.update(
+            generate_services(rospack, message_string_pairs=message_string_pairs))
+        data.update(generate_actions(
+            rospack, message_string_pairs=message_string_pairs))
+
+    # Generate files for the specific package
+    data_pkg_hpp = {
+        'ros2_package_name': ros2_package_name,
+        # include directives and template types
+        'mapped_ros1_msgs': [
+            m.ros1_msg for m in data['mappings']
+            if m.ros2_msg.package_name == ros2_package_name],
+        'mapped_ros2_msgs': [
+            m.ros2_msg for m in data['mappings']
+            if m.ros2_msg.package_name == ros2_package_name],
+        # forward declaration of factory functions
+        'ros2_msg_types': [
+            m for m in data['all_ros2_msgs']
+            if m.package_name == ros2_package_name],
+        'ros2_srv_types': [
+            s for s in data['all_ros2_srvs']
+            if s.package_name == ros2_package_name],
+        'ros2_action_types': [
+            s for s in data['all_ros2_actions']
+            if s.package_name == ros2_package_name],
+        # forward declaration of template specializations
+        'mappings': [
+            m for m in data['mappings']
+            if m.ros2_msg.package_name == ros2_package_name],
+    }
+    template_file = os.path.join(template_dir, 'pkg_factories.hpp.em')
+    output_file = os.path.join(
+        output_path, '%s_factories.hpp' % ros2_package_name)
+    expand_template(template_file, data_pkg_hpp, output_file)
+
+    data_pkg_cpp = {
+        'ros2_package_name': ros2_package_name,
+        # call interface specific factory functions
+        'ros2_msg_types': data_pkg_hpp['ros2_msg_types'],
+        'ros2_srv_types': data_pkg_hpp['ros2_srv_types'],
+        'ros2_action_types': data_pkg_hpp['ros2_action_types'],
+    }
+    template_file = os.path.join(template_dir, 'pkg_factories.cpp.em')
+    output_file = os.path.join(
+        output_path, '%s_factories.cpp' % ros2_package_name)
+    expand_template(template_file, data_pkg_cpp, output_file)
+
+    for interface_type, interfaces in zip(
+        ['msg', 'srv', 'action'], [data['all_ros2_msgs'],
+                                   data['all_ros2_srvs'], data['all_ros2_actions']]
+    ):
+        for interface in interfaces:
+            if interface.package_name != ros2_package_name:
+                continue
+            data_idl_cpp = {
+                'ros2_package_name': ros2_package_name,
+                'interface_type': interface_type,
+                'interface': interface,
+                'mapped_msgs': [],
+                'mapped_services': [],
+                'mapped_actions': [],
+            }
+            if interface_type == 'msg':
+                data_idl_cpp['mapped_msgs'] += [
+                    m for m in data['mappings']
+                    if m.ros2_msg.package_name == ros2_package_name and
+                    m.ros2_msg.message_name == interface.message_name]
+            if interface_type == 'srv':
+                data_idl_cpp['mapped_services'] += [
+                    s for s in data['services']
+                    if s['ros2_package'] == ros2_package_name and
+                    s['ros2_name'] == interface.message_name]
+            if interface_type == 'action':
+                data_idl_cpp['mapped_actions'] += [
+                    s for s in data['actions']
+                    if s['ros2_package'] == ros2_package_name and
+                    s['ros2_name'] == interface.message_name]
+
+            template_file = os.path.join(
+                template_dir, 'interface_factories.cpp.em')
+            output_file = os.path.join(
+                output_path, '%s__%s__%s__factories.cpp' %
+                (ros2_package_name, interface_type, interface.message_name))
+            expand_template(template_file, data_idl_cpp, output_file)
 
 
 def generate_messages(rospack=None):

@@ -23,12 +23,17 @@ def main(argv=sys.argv[1:]):
         '--template-dir',
         required=True,
         help='The location of the template files')
+    parser.add_argument(
+        '--ros2-package-name',
+        default=None,
+        help='The name of a specific ROS 2 package to generate factories for (optional)')
     args = parser.parse_args(argv)
 
     try:
         return generate_cpp(
             args.output_path,
             args.template_dir,
+            args.ros2_package_name,
         )
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
