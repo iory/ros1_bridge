@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <set>
@@ -20,6 +21,7 @@
 #include <utility>
 #include <vector>
 #include <boost/algorithm/string/predicate.hpp>   // NOLINT
+#include <yaml-cpp/yaml.h>
 
 // include ROS 1
 #ifdef __clang__
@@ -44,6 +46,104 @@
 
 
 std::mutex g_bridge_mutex;
+
+enum class BridgeDirection
+{
+  BIDIRECTIONAL,
+  ONE_TO_TWO,
+  TWO_TO_ONE
+};
+
+struct TopicConfig
+{
+  std::string name;
+  BridgeDirection direction;
+};
+
+struct BridgeConfig
+{
+  std::vector<TopicConfig> topics;
+  std::vector<std::string> services_1to2;
+  std::vector<std::string> services_2to1;
+  std::vector<std::string> actions_1to2;
+  std::vector<std::string> actions_2to1;
+  bool filter_enabled;  // If false, bridge all topics (default behavior)
+
+  BridgeConfig() : filter_enabled(false) {}
+};
+
+BridgeConfig load_config_file(const std::string & config_path)
+{
+  BridgeConfig config;
+
+  try {
+    YAML::Node yaml_config = YAML::LoadFile(config_path);
+
+    // Load topics
+    if (yaml_config["topics"] && yaml_config["topics"].IsSequence()) {
+      config.filter_enabled = true;
+      for (const auto & topic_node : yaml_config["topics"]) {
+        TopicConfig topic;
+        topic.name = topic_node["name"].as<std::string>();
+
+        std::string direction_str = topic_node["direction"]
+          ? topic_node["direction"].as<std::string>() : "bidirectional";
+
+        if (direction_str == "1to2") {
+          topic.direction = BridgeDirection::ONE_TO_TWO;
+        } else if (direction_str == "2to1") {
+          topic.direction = BridgeDirection::TWO_TO_ONE;
+        } else {
+          topic.direction = BridgeDirection::BIDIRECTIONAL;
+        }
+
+        config.topics.push_back(topic);
+      }
+    }
+
+    // Load services
+    if (yaml_config["services"]) {
+      config.filter_enabled = true;
+      if (yaml_config["services"]["1to2"] && yaml_config["services"]["1to2"].IsSequence()) {
+        for (const auto & service_node : yaml_config["services"]["1to2"]) {
+          config.services_1to2.push_back(service_node.as<std::string>());
+        }
+      }
+      if (yaml_config["services"]["2to1"] && yaml_config["services"]["2to1"].IsSequence()) {
+        for (const auto & service_node : yaml_config["services"]["2to1"]) {
+          config.services_2to1.push_back(service_node.as<std::string>());
+        }
+      }
+    }
+
+    // Load actions
+    if (yaml_config["actions"]) {
+      config.filter_enabled = true;
+      if (yaml_config["actions"]["1to2"] && yaml_config["actions"]["1to2"].IsSequence()) {
+        for (const auto & action_node : yaml_config["actions"]["1to2"]) {
+          config.actions_1to2.push_back(action_node.as<std::string>());
+        }
+      }
+      if (yaml_config["actions"]["2to1"] && yaml_config["actions"]["2to1"].IsSequence()) {
+        for (const auto & action_node : yaml_config["actions"]["2to1"]) {
+          config.actions_2to1.push_back(action_node.as<std::string>());
+        }
+      }
+    }
+
+    printf("Loaded bridge configuration from %s\n", config_path.c_str());
+    printf("  Topics: %zu\n", config.topics.size());
+    printf("  Services 1to2: %zu, 2to1: %zu\n",
+      config.services_1to2.size(), config.services_2to1.size());
+    printf("  Actions 1to2: %zu, 2to1: %zu\n",
+      config.actions_1to2.size(), config.actions_2to1.size());
+
+  } catch (const YAML::Exception & e) {
+    fprintf(stderr, "Failed to load config file '%s': %s\n", config_path.c_str(), e.what());
+  }
+
+  return config;
+}
 
 struct Bridge1to2HandlesAndMessageTypes
 {
@@ -70,9 +170,20 @@ bool get_flag_option(const std::vector<std::string> & args, const std::string & 
   return it != args.end();
 }
 
+std::string get_option_value(
+  const std::vector<std::string> & args, const std::string & option)
+{
+  auto it = std::find(args.begin(), args.end(), option);
+  if (it != args.end() && ++it != args.end()) {
+    return *it;
+  }
+  return "";
+}
+
 bool parse_command_options(
   int argc, char ** argv, bool & output_topic_introspection,
-  bool & bridge_all_1to2_topics, bool & bridge_all_2to1_topics)
+  bool & bridge_all_1to2_topics, bool & bridge_all_2to1_topics,
+  std::string & config_file_path)
 {
   std::vector<std::string> args(argv, argv + argc);
 
@@ -90,6 +201,8 @@ bool parse_command_options(
     ss << "a matching subscriber." << std::endl;
     ss << " --bridge-all-2to1-topics: Bridge all ROS 2 topics to ROS 1, whether or not there is ";
     ss << "a matching subscriber." << std::endl;
+    ss << " --config <path>: Path to YAML configuration file to filter topics/services/actions.";
+    ss << std::endl;
     std::cout << ss.str();
     return false;
   }
@@ -131,6 +244,8 @@ bool parse_command_options(
   bridge_all_1to2_topics = bridge_all_topics || get_flag_option(args, "--bridge-all-1to2-topics");
   bridge_all_2to1_topics = bridge_all_topics || get_flag_option(args, "--bridge-all-2to1-topics");
 
+  config_file_path = get_option_value(args, "--config");
+
   return true;
 }
 
@@ -153,14 +268,52 @@ void update_bridge(
   std::unique_ptr<ros1_bridge::ActionFactoryInterface>> & action_bridges_1_to_2,
   std::map<std::string,
   std::unique_ptr<ros1_bridge::ActionFactoryInterface>> & action_bridges_2_to_1,
-  bool bridge_all_1to2_topics, bool bridge_all_2to1_topics)
+  bool bridge_all_1to2_topics, bool bridge_all_2to1_topics,
+  const BridgeConfig & config)
 {
   std::lock_guard<std::mutex> lock(g_bridge_mutex);
+
+  // Helper lambda to check if topic is allowed based on config
+  auto is_topic_allowed_1to2 = [&config](const std::string & topic_name) {
+    if (!config.filter_enabled) {
+      return true;
+    }
+    for (const auto & topic_config : config.topics) {
+      if (topic_config.name == topic_name &&
+        (topic_config.direction == BridgeDirection::BIDIRECTIONAL ||
+        topic_config.direction == BridgeDirection::ONE_TO_TWO))
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  auto is_topic_allowed_2to1 = [&config](const std::string & topic_name) {
+    if (!config.filter_enabled) {
+      return true;
+    }
+    for (const auto & topic_config : config.topics) {
+      if (topic_config.name == topic_name &&
+        (topic_config.direction == BridgeDirection::BIDIRECTIONAL ||
+        topic_config.direction == BridgeDirection::TWO_TO_ONE))
+      {
+        return true;
+      }
+    }
+    return false;
+  };
 
   // create 1to2 bridges
   for (auto ros1_publisher : ros1_publishers) {
     // identify topics available as ROS 1 publishers as well as ROS 2 subscribers
     auto topic_name = ros1_publisher.first;
+
+    // Check if topic is allowed by config
+    if (!is_topic_allowed_1to2(topic_name)) {
+      continue;
+    }
+
     std::string ros1_type_name = ros1_publisher.second;
     std::string ros2_type_name;
 
@@ -230,6 +383,12 @@ void update_bridge(
   for (auto ros2_publisher : ros2_publishers) {
     // identify topics available as ROS 1 subscribers as well as ROS 2 publishers
     auto topic_name = ros2_publisher.first;
+
+    // Check if topic is allowed by config
+    if (!is_topic_allowed_2to1(topic_name)) {
+      continue;
+    }
+
     std::string ros2_type_name = ros2_publisher.second;
     std::string ros1_type_name;
 
@@ -323,9 +482,34 @@ void update_bridge(
     printf("removed 2to1 bridge for topic '%s'\n", topic_name.c_str());
   }
 
+  // Helper lambda to check if service is allowed based on config
+  auto is_service_allowed_2to1 = [&config](const std::string & service_name) {
+    if (!config.filter_enabled) {
+      return true;
+    }
+    return std::find(
+      config.services_2to1.begin(), config.services_2to1.end(),
+      service_name) != config.services_2to1.end();
+  };
+
+  auto is_service_allowed_1to2 = [&config](const std::string & service_name) {
+    if (!config.filter_enabled) {
+      return true;
+    }
+    return std::find(
+      config.services_1to2.begin(), config.services_1to2.end(),
+      service_name) != config.services_1to2.end();
+  };
+
   // create bridges for ros1 services
   for (auto & service : ros1_services) {
     auto & name = service.first;
+
+    // Check if service is allowed by config
+    if (!is_service_allowed_2to1(name)) {
+      continue;
+    }
+
     auto & details = service.second;
     if (
       service_bridges_2_to_1.find(name) == service_bridges_2_to_1.end() &&
@@ -351,6 +535,12 @@ void update_bridge(
   // create bridges for ros2 services
   for (auto & service : ros2_services) {
     auto & name = service.first;
+
+    // Check if service is allowed by config
+    if (!is_service_allowed_1to2(name)) {
+      continue;
+    }
+
     auto & details = service.second;
     if (
       service_bridges_1_to_2.find(name) == service_bridges_1_to_2.end() &&
@@ -399,9 +589,34 @@ void update_bridge(
     }
   }
 
+  // Helper lambda to check if action is allowed based on config
+  auto is_action_allowed_2to1 = [&config](const std::string & action_name) {
+    if (!config.filter_enabled) {
+      return true;
+    }
+    return std::find(
+      config.actions_2to1.begin(), config.actions_2to1.end(),
+      action_name) != config.actions_2to1.end();
+  };
+
+  auto is_action_allowed_1to2 = [&config](const std::string & action_name) {
+    if (!config.filter_enabled) {
+      return true;
+    }
+    return std::find(
+      config.actions_1to2.begin(), config.actions_1to2.end(),
+      action_name) != config.actions_1to2.end();
+  };
+
   // create bridges for ros1 actions
   for (auto & ros1_action : ros1_action_servers) {
     auto & name = ros1_action.first;
+
+    // Check if action is allowed by config
+    if (!is_action_allowed_2to1(name)) {
+      continue;
+    }
+
     auto & details = ros1_action.second;
     if (
       action_bridges_1_to_2.find(name) == action_bridges_1_to_2.end() &&
@@ -424,6 +639,12 @@ void update_bridge(
   // create bridges for ros2 actions
   for (auto & ros2_action : ros2_action_servers) {
     auto & name = ros2_action.first;
+
+    // Check if action is allowed by config
+    if (!is_action_allowed_1to2(name)) {
+      continue;
+    }
+
     auto & details = ros2_action.second;
     if (
       action_bridges_1_to_2.find(name) == action_bridges_1_to_2.end() &&
@@ -757,10 +978,18 @@ int main(int argc, char * argv[])
   bool output_topic_introspection;
   bool bridge_all_1to2_topics;
   bool bridge_all_2to1_topics;
+  std::string config_file_path;
   if (!parse_command_options(
-      argc, argv, output_topic_introspection, bridge_all_1to2_topics, bridge_all_2to1_topics))
+      argc, argv, output_topic_introspection, bridge_all_1to2_topics,
+      bridge_all_2to1_topics, config_file_path))
   {
     return 0;
+  }
+
+  // Load configuration file if specified
+  BridgeConfig config;
+  if (!config_file_path.empty()) {
+    config = load_config_file(config_file_path);
   }
 
   // ROS 2 node
@@ -803,7 +1032,8 @@ int main(int argc, char * argv[])
     &service_bridges_1_to_2, &service_bridges_2_to_1,
     &action_bridges_1_to_2, &action_bridges_2_to_1,
     &output_topic_introspection,
-    &bridge_all_1to2_topics, &bridge_all_2to1_topics
+    &bridge_all_1to2_topics, &bridge_all_2to1_topics,
+    &config
     ](const ros::TimerEvent &) -> void
     {
       // collect all topics names which have at least one publisher or subscriber beside this bridge
@@ -936,7 +1166,8 @@ int main(int argc, char * argv[])
         bridges_1to2, bridges_2to1,
         service_bridges_1_to_2, service_bridges_2_to_1,
         action_bridges_1_to_2, action_bridges_2_to_1,
-        bridge_all_1to2_topics, bridge_all_2to1_topics);
+        bridge_all_1to2_topics, bridge_all_2to1_topics,
+        config);
     };
 
   auto ros1_poll_timer = ros1_node.createTimer(ros::Duration(1.0), ros1_poll);
@@ -958,7 +1189,8 @@ int main(int argc, char * argv[])
     &action_bridges_1_to_2, &action_bridges_2_to_1,
     &output_topic_introspection,
     &bridge_all_1to2_topics, &bridge_all_2to1_topics,
-    &already_ignored_topics, &already_ignored_services
+    &already_ignored_topics, &already_ignored_services,
+    &config
     ]() -> void
     {
       auto ros2_topics = ros2_node->get_topic_names_and_types();
@@ -1118,7 +1350,8 @@ int main(int argc, char * argv[])
         bridges_1to2, bridges_2to1,
         service_bridges_1_to_2, service_bridges_2_to_1,
         action_bridges_1_to_2, action_bridges_2_to_1,
-        bridge_all_1to2_topics, bridge_all_2to1_topics);
+        bridge_all_1to2_topics, bridge_all_2to1_topics,
+        config);
     };
 
   auto ros2_poll_timer = ros2_node->create_wall_timer(
