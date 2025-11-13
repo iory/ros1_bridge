@@ -14,10 +14,14 @@ endif()
 # https://github.com/ros/roscpp_core/pull/136
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm" OR CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
   message(STATUS "Configuring for ARM or AArch64 architecture.")
+  message(STATUS "Current CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
   # Always use O2 optimization for ARM/AArch64 to avoid pub/sub issues
-  if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+  # Apply to all build types except Debug
+  if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2")
     set(CMAKE_CXX_FLAGS_RELEASE "-O2")
     set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g")
+    set(CMAKE_CXX_FLAGS_MINSIZEREL "-O2")
     message(STATUS "ARM/AArch64 detected: Setting CXX_FLAGS to use -O2 optimization.")
   endif()
 endif()
