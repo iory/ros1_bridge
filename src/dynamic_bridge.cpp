@@ -47,6 +47,12 @@
 
 std::mutex g_bridge_mutex;
 
+// Pending removal sets for deferred deletion
+std::set<std::string> g_actions_1to2_pending_removal;
+std::set<std::string> g_actions_2to1_pending_removal;
+std::set<std::string> g_services_1to2_pending_removal;
+std::set<std::string> g_services_2to1_pending_removal;
+
 enum class BridgeDirection
 {
   BIDIRECTIONAL,
@@ -272,6 +278,83 @@ void update_bridge(
   const BridgeConfig & config)
 {
   std::lock_guard<std::mutex> lock(g_bridge_mutex);
+
+  // Execute deferred deletions from previous cycle
+  // Process actions 1to2
+  for (auto it = g_actions_1to2_pending_removal.begin();
+    it != g_actions_1to2_pending_removal.end(); )
+  {
+    auto bridge_it = action_bridges_1_to_2.find(*it);
+    if (bridge_it != action_bridges_1_to_2.end()) {
+      // Only erase if the server is still not present
+      if (ros2_action_servers.find(*it) == ros2_action_servers.end()) {
+        printf("Executing deferred removal of 1to2 bridge for action %s\n", it->c_str());
+        action_bridges_1_to_2.erase(bridge_it);
+        it = g_actions_1to2_pending_removal.erase(it);
+      } else {
+        // Server came back, cancel removal
+        printf("Action server %s came back, canceling removal\n", it->c_str());
+        it = g_actions_1to2_pending_removal.erase(it);
+      }
+    } else {
+      it = g_actions_1to2_pending_removal.erase(it);
+    }
+  }
+
+  // Process actions 2to1
+  for (auto it = g_actions_2to1_pending_removal.begin();
+    it != g_actions_2to1_pending_removal.end(); )
+  {
+    auto bridge_it = action_bridges_2_to_1.find(*it);
+    if (bridge_it != action_bridges_2_to_1.end()) {
+      if (ros1_action_servers.find(*it) == ros1_action_servers.end()) {
+        printf("Executing deferred removal of 2to1 bridge for action %s\n", it->c_str());
+        action_bridges_2_to_1.erase(bridge_it);
+        it = g_actions_2to1_pending_removal.erase(it);
+      } else {
+        printf("Action server %s came back, canceling removal\n", it->c_str());
+        it = g_actions_2to1_pending_removal.erase(it);
+      }
+    } else {
+      it = g_actions_2to1_pending_removal.erase(it);
+    }
+  }
+
+  // Process services 1to2
+  for (auto it = g_services_1to2_pending_removal.begin();
+    it != g_services_1to2_pending_removal.end(); )
+  {
+    auto bridge_it = service_bridges_1_to_2.find(*it);
+    if (bridge_it != service_bridges_1_to_2.end()) {
+      if (ros2_services.find(*it) == ros2_services.end()) {
+        printf("Executing deferred removal of 1to2 bridge for service %s\n", it->c_str());
+        service_bridges_1_to_2.erase(bridge_it);
+        it = g_services_1to2_pending_removal.erase(it);
+      } else {
+        it = g_services_1to2_pending_removal.erase(it);
+      }
+    } else {
+      it = g_services_1to2_pending_removal.erase(it);
+    }
+  }
+
+  // Process services 2to1
+  for (auto it = g_services_2to1_pending_removal.begin();
+    it != g_services_2to1_pending_removal.end(); )
+  {
+    auto bridge_it = service_bridges_2_to_1.find(*it);
+    if (bridge_it != service_bridges_2_to_1.end()) {
+      if (ros1_services.find(*it) == ros1_services.end()) {
+        printf("Executing deferred removal of 2to1 bridge for service %s\n", it->c_str());
+        service_bridges_2_to_1.erase(bridge_it);
+        it = g_services_2to1_pending_removal.erase(it);
+      } else {
+        it = g_services_2to1_pending_removal.erase(it);
+      }
+    } else {
+      it = g_services_2to1_pending_removal.erase(it);
+    }
+  }
 
   // Helper lambda to check if topic is allowed based on config
   auto is_topic_allowed_1to2 = [&config](const std::string & topic_name) {
@@ -560,34 +643,36 @@ void update_bridge(
     }
   }
 
-  // remove obsolete ros1 services
-  for (auto it = service_bridges_2_to_1.begin(); it != service_bridges_2_to_1.end(); ) {
+  // remove obsolete ros1 services (deferred deletion)
+  for (auto it = service_bridges_2_to_1.begin(); it != service_bridges_2_to_1.end(); ++it) {
     if (ros1_services.find(it->first) == ros1_services.end()) {
-      printf("Removed 2 to 1 bridge for service %s\n", it->first.data());
-      try {
-        it = service_bridges_2_to_1.erase(it);
-      } catch (std::runtime_error & e) {
-        fprintf(stderr, "There was an error while removing 2 to 1 bridge: %s\n", e.what());
-        ++it;  // エラー時もイテレータを進める
+      // Mark for removal in next cycle if not already marked
+      if (g_services_2to1_pending_removal.find(it->first) == g_services_2to1_pending_removal.end()) {
+        printf("Marking 2to1 bridge for service %s for deferred removal\n", it->first.data());
+        g_services_2to1_pending_removal.insert(it->first);
       }
     } else {
-      ++it;
+      // Service came back, cancel any pending removal
+      g_services_2to1_pending_removal.erase(it->first);
     }
   }
 
-  // remove obsolete ros2 services
-  for (auto it = service_bridges_1_to_2.begin(); it != service_bridges_1_to_2.end(); ) {
+  // remove obsolete ros2 services (deferred deletion)
+  for (auto it = service_bridges_1_to_2.begin(); it != service_bridges_1_to_2.end(); ++it) {
     if (ros2_services.find(it->first) == ros2_services.end()) {
-      printf("Removed 1 to 2 bridge for service %s\n", it->first.data());
-      try {
-        it->second.server.shutdown();
-        it = service_bridges_1_to_2.erase(it);
-      } catch (std::runtime_error & e) {
-        fprintf(stderr, "There was an error while removing 1 to 2 bridge: %s\n", e.what());
-        ++it;  // エラー時もイテレータを進める
+      // Mark for removal in next cycle if not already marked
+      if (g_services_1to2_pending_removal.find(it->first) == g_services_1to2_pending_removal.end()) {
+        printf("Marking 1to2 bridge for service %s for deferred removal\n", it->first.data());
+        try {
+          it->second.server.shutdown();
+          g_services_1to2_pending_removal.insert(it->first);
+        } catch (std::runtime_error & e) {
+          fprintf(stderr, "Error during service shutdown: %s\n", e.what());
+        }
       }
     } else {
-      ++it;
+      // Service came back, cancel any pending removal
+      g_services_1to2_pending_removal.erase(it->first);
     }
   }
 
@@ -666,39 +751,45 @@ void update_bridge(
     }
   }
 
-  // remove obsolete ros1 actions
-  for (auto it = action_bridges_2_to_1.begin(); it != action_bridges_2_to_1.end(); ) {
+  // remove obsolete ros1 actions (deferred deletion)
+  for (auto it = action_bridges_2_to_1.begin(); it != action_bridges_2_to_1.end(); ++it) {
     if (ros1_action_servers.find(it->first) == ros1_action_servers.end()) {
-      printf("Removed 2 to 1 bridge for action %s\n", it->first.data());
-      try {
-        if (it->second) {
-          it->second->shutdown();
+      // Mark for removal in next cycle if not already marked
+      if (g_actions_2to1_pending_removal.find(it->first) == g_actions_2to1_pending_removal.end()) {
+        printf("Marking 2to1 bridge for action %s for deferred removal\n", it->first.data());
+        try {
+          if (it->second) {
+            it->second->shutdown();
+          }
+          g_actions_2to1_pending_removal.insert(it->first);
+        } catch (std::runtime_error & e) {
+          fprintf(stderr, "Error during action shutdown: %s\n", e.what());
         }
-        it = action_bridges_2_to_1.erase(it);
-      } catch (std::runtime_error & e) {
-        fprintf(stderr, "There was an error while removing 2 to 1 bridge: %s\n", e.what());
-        ++it;  // エラー時もイテレータを進める
       }
     } else {
-      ++it;
+      // Action server came back, cancel any pending removal
+      g_actions_2to1_pending_removal.erase(it->first);
     }
   }
 
-  // remove obsolete ros2 actions
-  for (auto it = action_bridges_1_to_2.begin(); it != action_bridges_1_to_2.end(); ) {
+  // remove obsolete ros2 actions (deferred deletion)
+  for (auto it = action_bridges_1_to_2.begin(); it != action_bridges_1_to_2.end(); ++it) {
     if (ros2_action_servers.find(it->first) == ros2_action_servers.end()) {
-      printf("Removed 1 to 2 bridge for action %s\n", it->first.data());
-      try {
-        if (it->second) {
-          it->second->shutdown();
+      // Mark for removal in next cycle if not already marked
+      if (g_actions_1to2_pending_removal.find(it->first) == g_actions_1to2_pending_removal.end()) {
+        printf("Marking 1to2 bridge for action %s for deferred removal\n", it->first.data());
+        try {
+          if (it->second) {
+            it->second->shutdown();
+          }
+          g_actions_1to2_pending_removal.insert(it->first);
+        } catch (std::runtime_error & e) {
+          fprintf(stderr, "Error during action shutdown: %s\n", e.what());
         }
-        it = action_bridges_1_to_2.erase(it);
-      } catch (std::runtime_error & e) {
-        fprintf(stderr, "There was an error while removing 1 to 2 bridge: %s\n", e.what());
-        ++it;  // エラー時もイテレータを進める
       }
     } else {
-      ++it;
+      // Action server came back, cancel any pending removal
+      g_actions_1to2_pending_removal.erase(it->first);
     }
   }
 }
