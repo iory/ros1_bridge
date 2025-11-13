@@ -10,6 +10,18 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra)
 endif()
 
+# To avoid issues with pub/sub in ROS topic on ARM architecture, compile with O2 optimization.
+# https://github.com/ros/roscpp_core/pull/136
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm" OR CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  message(STATUS "Configuring for ARM or AArch64 architecture.")
+  # Always use O2 optimization for ARM/AArch64 to avoid pub/sub issues
+  if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O2")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g")
+    message(STATUS "ARM/AArch64 detected: Setting CXX_FLAGS to use -O2 optimization.")
+  endif()
+endif()
+
 find_package(rmw REQUIRED)
 
 find_package(ament_cmake REQUIRED)
