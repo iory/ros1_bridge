@@ -34,10 +34,48 @@ Factory<
   controller_manager_msgs::msg::ControllerState & ros2_msg)
 {
   ros2_msg.name = ros1_msg.name;
-  ros2_msg.state = ros1_msg.state;
+
+  // Map ROS 1 controller states to ROS 2 states
+  // ROS 1: running, stopped
+  // ROS 2: unconfigured, inactive, active, finalized
+  if (ros1_msg.state == "running") {
+    ros2_msg.state = "active";
+  } else if (ros1_msg.state == "stopped") {
+    ros2_msg.state = "inactive";
+  } else {
+    // Pass through unknown states
+    ros2_msg.state = ros1_msg.state;
+  }
+
   ros2_msg.type = ros1_msg.type;
+
+  // Convert claimed_resources to required_state_interfaces
+  // ROS 1 claimed_resources contains joint names we need
+  for (const auto & resource_set : ros1_msg.claimed_resources) {
+    // Extract interface type from hardware_interface string
+    // e.g., "hardware_interface::PositionJointInterface" -> "position"
+    std::string hw_iface = resource_set.hardware_interface;
+    std::string iface_type = "position";  // default
+
+    if (hw_iface.find("Position") != std::string::npos) {
+      iface_type = "position";
+    } else if (hw_iface.find("Velocity") != std::string::npos) {
+      iface_type = "velocity";
+    } else if (hw_iface.find("Effort") != std::string::npos) {
+      iface_type = "effort";
+    }
+
+    // Create interface strings in ROS 2 format: "joint_name/interface_type"
+    for (const auto & joint_name : resource_set.resources) {
+      std::string state_interface = joint_name + "/" + iface_type;
+      ros2_msg.required_state_interfaces.push_back(state_interface);
+      // Also add to required_command_interfaces for controllers that need it
+      ros2_msg.required_command_interfaces.push_back(state_interface);
+    }
+  }
+
   // Note: ROS2 has additional fields that don't exist in ROS1
-  // (is_async, update_rate, claimed_interfaces, etc.)
+  // (is_async, update_rate, etc.)
   // These will remain at their default values
 }
 
@@ -51,7 +89,19 @@ Factory<
   controller_manager_msgs::ControllerState & ros1_msg)
 {
   ros1_msg.name = ros2_msg.name;
-  ros1_msg.state = ros2_msg.state;
+
+  // Map ROS 2 controller states to ROS 1 states
+  // ROS 2: unconfigured, inactive, active, finalized
+  // ROS 1: running, stopped
+  if (ros2_msg.state == "active") {
+    ros1_msg.state = "running";
+  } else if (ros2_msg.state == "inactive" || ros2_msg.state == "unconfigured" || ros2_msg.state == "finalized") {
+    ros1_msg.state = "stopped";
+  } else {
+    // Pass through unknown states
+    ros1_msg.state = ros2_msg.state;
+  }
+
   ros1_msg.type = ros2_msg.type;
   // Note: ROS1 has claimed_resources field that doesn't exist in ROS2
   // It will remain empty

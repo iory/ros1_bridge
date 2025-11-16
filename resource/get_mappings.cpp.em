@@ -39,6 +39,13 @@ get_1to2_mapping(const std::string & ros1_type_name, std::string & ros2_type_nam
   }
 @[end for]@
 
+  // Custom message mappings with incompatible field names
+  if (ros1_type_name == "control_msgs/JointTrajectoryControllerState")
+  {
+    ros2_type_name = "control_msgs/msg/JointTrajectoryControllerState";
+    return true;
+  }
+
   return false;
 }
 
@@ -58,6 +65,13 @@ get_2to1_mapping(const std::string & ros2_type_name, std::string & ros1_type_nam
   }
 @[end for]@
 
+  // Custom message mappings with incompatible field names
+  if (ros2_type_name == "control_msgs/msg/JointTrajectoryControllerState")
+  {
+    ros1_type_name = "control_msgs/JointTrajectoryControllerState";
+    return true;
+  }
+
   return false;
 }
 
@@ -71,6 +85,11 @@ get_all_message_mappings_2to1()
       "@(m.ros1_msg.package_name)/@(m.ros1_msg.message_name)"   // ROS 1
     },
 @[end for]@
+    // Custom message mappings with incompatible field names
+    {
+      "control_msgs/msg/JointTrajectoryControllerState",  // ROS 2
+      "control_msgs/JointTrajectoryControllerState"   // ROS 1
+    },
   };
   return mappings;
 }
@@ -85,6 +104,11 @@ get_all_service_mappings_2to1()
       "@(s['ros1_package'])/@(s['ros1_name'])"   // ROS 1
     },
 @[end for]@
+    // Custom service mappings with incompatible field names
+    {
+      "controller_manager_msgs/srv/SwitchController",  // ROS 2
+      "controller_manager_msgs/SwitchController"   // ROS 1
+    },
   };
   return mappings;
 }
