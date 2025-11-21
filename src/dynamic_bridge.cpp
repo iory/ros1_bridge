@@ -1594,9 +1594,15 @@ int main(int argc, char * argv[])
 
   printf("Starting multi-threaded bridge with %d ROS 1 threads and ROS 2 multi-threaded executor\n",
          std::thread::hardware_concurrency());
+  printf("Press Ctrl+C to stop...\n");
 
-  // Spin with multi-threaded executor
-  executor.spin();
+  // Spin with proper shutdown handling (allows Ctrl+C to work)
+  while (ros1_node.ok() && rclcpp::ok()) {
+    executor.spin_some(std::chrono::milliseconds(100));
+  }
+
+  printf("\nShutting down bridge...\n");
+  async_spinner.stop();
 
   return 0;
 }
