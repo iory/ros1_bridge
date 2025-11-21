@@ -5,8 +5,12 @@ topics:
   # tf topics
   - name: /tf
     direction: 1to2
+  - name: /tf
+    direction: 2to1  
   - name: /tf_static
     direction: 1to2
+  - name: /tf_static
+    direction: 2to1  
 
   # odometry
   - name: /odom
