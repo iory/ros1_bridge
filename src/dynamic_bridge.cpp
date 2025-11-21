@@ -18,6 +18,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 #include <boost/algorithm/string/predicate.hpp>   // NOLINT
@@ -47,7 +48,7 @@
 
 std::mutex g_bridge_mutex;
 
-// Pending removal sets for deferred deletion
+// Pending removal sets for staged deletion
 std::set<std::string> g_actions_1to2_pending_removal;
 std::set<std::string> g_actions_2to1_pending_removal;
 std::set<std::string> g_services_1to2_pending_removal;
@@ -167,6 +168,16 @@ struct Bridge2to1HandlesAndMessageTypes
   std::string ros2_type_name;
 };
 
+// Zombie storage for safe deferred deletion (2-cycle delay)
+// Objects moved here are kept alive for one more cycle before final destruction
+// This prevents segfaults from callbacks executing on deleted objects
+std::map<std::string, Bridge1to2HandlesAndMessageTypes> g_zombie_bridges_1to2;
+std::map<std::string, Bridge2to1HandlesAndMessageTypes> g_zombie_bridges_2to1;
+std::map<std::string, ros1_bridge::ServiceBridge1to2> g_zombie_services_1to2;
+std::map<std::string, ros1_bridge::ServiceBridge2to1> g_zombie_services_2to1;
+std::map<std::string, std::unique_ptr<ros1_bridge::ActionFactoryInterface>> g_zombie_actions_1to2;
+std::map<std::string, std::unique_ptr<ros1_bridge::ActionFactoryInterface>> g_zombie_actions_2to1;
+
 bool find_command_option(const std::vector<std::string> & args, const std::string & option)
 {
   return std::find(args.begin(), args.end(), option) != args.end();
@@ -281,16 +292,46 @@ void update_bridge(
 {
   std::lock_guard<std::mutex> lock(g_bridge_mutex);
 
-  // Execute deferred deletions from previous cycle
+  // ★ STEP 0: Clear zombies from previous cycle (safe 2-cycle delayed deletion) ★
+  // These objects were marked for deletion in cycle N-1 and moved to pending in cycle N
+  // Now in cycle N+1, we can safely destroy them as any running callbacks have finished
+  if (!g_zombie_bridges_1to2.empty()) {
+    printf("Clearing %zu zombie 1to2 topic bridges from memory\n", g_zombie_bridges_1to2.size());
+    g_zombie_bridges_1to2.clear();
+  }
+  if (!g_zombie_bridges_2to1.empty()) {
+    printf("Clearing %zu zombie 2to1 topic bridges from memory\n", g_zombie_bridges_2to1.size());
+    g_zombie_bridges_2to1.clear();
+  }
+  if (!g_zombie_services_1to2.empty()) {
+    printf("Clearing %zu zombie 1to2 service bridges from memory\n", g_zombie_services_1to2.size());
+    g_zombie_services_1to2.clear();
+  }
+  if (!g_zombie_services_2to1.empty()) {
+    printf("Clearing %zu zombie 2to1 service bridges from memory\n", g_zombie_services_2to1.size());
+    g_zombie_services_2to1.clear();
+  }
+  if (!g_zombie_actions_1to2.empty()) {
+    printf("Clearing %zu zombie 1to2 action bridges from memory\n", g_zombie_actions_1to2.size());
+    g_zombie_actions_1to2.clear();
+  }
+  if (!g_zombie_actions_2to1.empty()) {
+    printf("Clearing %zu zombie 2to1 action bridges from memory\n", g_zombie_actions_2to1.size());
+    g_zombie_actions_2to1.clear();
+  }
+
+  // ★ STEP 1: Execute deferred deletions from previous cycle (move to zombie) ★
   // Process actions 1to2
   for (auto it = g_actions_1to2_pending_removal.begin();
     it != g_actions_1to2_pending_removal.end(); )
   {
     auto bridge_it = action_bridges_1_to_2.find(*it);
     if (bridge_it != action_bridges_1_to_2.end()) {
-      // Only erase if the server is still not present
+      // Only move to zombie if the server is still not present
       if (ros2_action_servers.find(*it) == ros2_action_servers.end()) {
-        printf("Executing deferred removal of 1to2 bridge for action %s\n", it->c_str());
+        printf("Moving 1to2 action bridge to zombie list: %s\n", it->c_str());
+        // Move to zombie storage (will be destroyed in next cycle)
+        g_zombie_actions_1to2[*it] = std::move(bridge_it->second);
         action_bridges_1_to_2.erase(bridge_it);
         it = g_actions_1to2_pending_removal.erase(it);
       } else {
@@ -310,7 +351,8 @@ void update_bridge(
     auto bridge_it = action_bridges_2_to_1.find(*it);
     if (bridge_it != action_bridges_2_to_1.end()) {
       if (ros1_action_servers.find(*it) == ros1_action_servers.end()) {
-        printf("Executing deferred removal of 2to1 bridge for action %s\n", it->c_str());
+        printf("Moving 2to1 action bridge to zombie list: %s\n", it->c_str());
+        g_zombie_actions_2to1[*it] = std::move(bridge_it->second);
         action_bridges_2_to_1.erase(bridge_it);
         it = g_actions_2to1_pending_removal.erase(it);
       } else {
@@ -329,7 +371,8 @@ void update_bridge(
     auto bridge_it = service_bridges_1_to_2.find(*it);
     if (bridge_it != service_bridges_1_to_2.end()) {
       if (ros2_services.find(*it) == ros2_services.end()) {
-        printf("Executing deferred removal of 1to2 bridge for service %s\n", it->c_str());
+        printf("Moving 1to2 service bridge to zombie list: %s\n", it->c_str());
+        g_zombie_services_1to2[*it] = std::move(bridge_it->second);
         service_bridges_1_to_2.erase(bridge_it);
         it = g_services_1to2_pending_removal.erase(it);
       } else {
@@ -347,7 +390,8 @@ void update_bridge(
     auto bridge_it = service_bridges_2_to_1.find(*it);
     if (bridge_it != service_bridges_2_to_1.end()) {
       if (ros1_services.find(*it) == ros1_services.end()) {
-        printf("Executing deferred removal of 2to1 bridge for service %s\n", it->c_str());
+        printf("Moving 2to1 service bridge to zombie list: %s\n", it->c_str());
+        g_zombie_services_2to1[*it] = std::move(bridge_it->second);
         service_bridges_2_to_1.erase(bridge_it);
         it = g_services_2to1_pending_removal.erase(it);
       } else {
@@ -369,7 +413,8 @@ void update_bridge(
         ros1_publishers.find(*it) == ros1_publishers.end() ||
         (!bridge_all_1to2_topics && ros2_subscribers.find(*it) == ros2_subscribers.end()))
       {
-        printf("Executing deferred removal of 1to2 bridge for topic %s\n", it->c_str());
+        printf("Moving 1to2 topic bridge to zombie list: %s\n", it->c_str());
+        g_zombie_bridges_1to2[*it] = std::move(bridge_it->second);
         bridges_1to2.erase(bridge_it);
         it = g_topics_1to2_pending_removal.erase(it);
       } else {
@@ -392,7 +437,8 @@ void update_bridge(
         (!bridge_all_2to1_topics && ros1_subscribers.find(*it) == ros1_subscribers.end()) ||
         ros2_publishers.find(*it) == ros2_publishers.end())
       {
-        printf("Executing deferred removal of 2to1 bridge for topic %s\n", it->c_str());
+        printf("Moving 2to1 topic bridge to zombie list: %s\n", it->c_str());
+        g_zombie_bridges_2to1[*it] = std::move(bridge_it->second);
         bridges_2to1.erase(bridge_it);
         it = g_topics_2to1_pending_removal.erase(it);
       } else {
@@ -1512,15 +1558,22 @@ int main(int argc, char * argv[])
     std::chrono::seconds(1), ros2_poll);
 
 
-  // ROS 1 asynchronous spinner
-  ros::AsyncSpinner async_spinner(1);
+  // ★★★ High Performance Multi-Threaded Configuration ★★★
+  // ROS 1 asynchronous spinner with multiple threads (0 = use hardware concurrency)
+  // This allows parallel processing of ROS 1 callbacks for maximum throughput
+  ros::AsyncSpinner async_spinner(0);  // 0 = use all available CPU cores
   async_spinner.start();
 
-  // ROS 2 spinning loop
-  rclcpp::executors::SingleThreadedExecutor executor;
-  while (ros1_node.ok() && rclcpp::ok()) {
-    executor.spin_node_once(ros2_node);
-  }
+  // ROS 2 multi-threaded executor for parallel callback processing
+  // This significantly improves performance for high-rate topics (images, point clouds, etc.)
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(ros2_node);
+
+  printf("Starting multi-threaded bridge with %d ROS 1 threads and ROS 2 multi-threaded executor\n",
+         std::thread::hardware_concurrency());
+
+  // Spin with multi-threaded executor
+  executor.spin();
 
   return 0;
 }
