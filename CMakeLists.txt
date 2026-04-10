@@ -23,6 +23,35 @@ set(cmake_extras_files cmake/find_ros1_package.cmake cmake/find_ros1_interface_p
 include(cmake/find_ros1_package.cmake)
 
 find_package(PkgConfig)
+
+if(DEFINED ENV{PKG_CONFIG_PATH})
+  string(REPLACE ":" ";" _current_pkg_config_list $ENV{PKG_CONFIG_PATH})
+else()
+  set(_current_pkg_config_list "")
+endif()
+
+set(_new_paths_found FALSE)
+file(GLOB _ros_dirs "/opt/ros/*")
+foreach(_ros_dir ${_ros_dirs})
+  set(_potential_path "${_ros_dir}/lib/pkgconfig")
+  if(IS_DIRECTORY "${_potential_path}")
+    list(FIND _current_pkg_config_list "${_potential_path}" _index)
+    if(_index EQUAL -1)
+      if(EXISTS "${_potential_path}/roscpp.pc")
+        message(STATUS "Found and prepending ROS 1 pkg-config path: ${_potential_path}")
+        list(INSERT _current_pkg_config_list 0 "${_potential_path}")
+        set(_new_paths_found TRUE)
+      endif()
+    endif()
+  endif()
+endforeach()
+
+if(_new_paths_found)
+  list(JOIN _current_pkg_config_list ":" _new_pkg_config_path_str)
+  set(ENV{PKG_CONFIG_PATH} "${_new_pkg_config_path_str}")
+  message(STATUS "Updated PKG_CONFIG_PATH for cmake: $ENV{PKG_CONFIG_PATH}")
+endif()
+
 if(NOT PKG_CONFIG_FOUND)
   message(WARNING "Failed to find PkgConfig, skipping...")
   # call ament_package() to avoid ament_tools treating this as a plain CMake pkg
@@ -48,7 +77,7 @@ find_ros1_package(actionlib REQUIRED)
 
 # Dependency that we should only look for if ROS 1 is installed (it's not present on a ROS 2
 # system; see https://github.com/ros2/ros1_bridge/pull/331#issuecomment-1188111510)
-find_package(xmlrpcpp REQUIRED)
+find_ros1_package(xmlrpcpp REQUIRED)
 
 # find ROS 1 packages with messages / services
 include(cmake/find_ros1_interface_packages.cmake)
@@ -173,9 +202,35 @@ set(target_dependencies
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+
+execute_process(
+  COMMAND ${PKG_CONFIG_EXECUTABLE} --variable=prefix roscpp
+  OUTPUT_VARIABLE _ROS1_PREFIX_PATH
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+if(NOT _ROS1_PREFIX_PATH)
+  message(FATAL_ERROR "Could not determine ROS 1 prefix path via pkg-config roscpp.")
+endif()
+
+set(_ROS1_PYTHON_PATH "${_ROS1_PREFIX_PATH}/lib/python3/dist-packages")
+message(STATUS "Setting ROS 1 Python path for script execution to: ${_ROS1_PYTHON_PATH}")
+
+set(_ROS1_PACKAGE_PATH "${_ROS1_PREFIX_PATH}/share")
+message(STATUS "Setting ROS 1 package path for script execution to: ${_ROS1_PACKAGE_PATH}")
+
 add_custom_command(
   OUTPUT ${generated_files}
-  COMMAND Python3::Interpreter
+  COMMAND env 
+          # Set ROS 1 environment variables
+          ROS_VERSION=1
+          ROS_DISTRO=one
+          ROS_ROOT=${_ROS1_PREFIX_PATH}/share/ros
+          ROS_ETC_DIR=${_ROS1_PREFIX_PATH}/etc/ros
+          ROS_PACKAGE_PATH=${_ROS1_PACKAGE_PATH}:$ENV{ROS_PACKAGE_PATH}
+          PYTHONPATH=${_ROS1_PYTHON_PATH}:$ENV{PYTHONPATH}
+          # ---------------------------
+          ${Python3_EXECUTABLE}
   ARGS bin/ros1_bridge_generate_factories
     --output-path "${generated_path}" --template-dir resource
   DEPENDS ${target_dependencies}
