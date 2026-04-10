@@ -163,33 +163,6 @@ ament_package(
 )
 
 set(generated_path "${CMAKE_BINARY_DIR}/generated")
-set(generated_files "${generated_path}/get_factory.cpp")
-list(APPEND generated_files "${generated_path}/get_mappings.cpp")
-
-# generate per interface compilation units to keep the memory usage low
-ament_index_get_resources(ros2_interface_packages "rosidl_interfaces")
-# actionlib_msgs is deprecated, but we will quiet the warning until the bridge has support for
-# ROS actions: https://github.com/ros2/design/issues/195
-set(actionlib_msgs_DEPRECATED_QUIET TRUE)
-foreach(package_name ${ros2_interface_packages})
-  find_package(${package_name} QUIET REQUIRED)
-  message(STATUS "Found ${package_name}: ${${package_name}_VERSION} (${${package_name}_DIR})")
-  if(NOT "${package_name}" STREQUAL "builtin_interfaces")
-    list(APPEND generated_files "${generated_path}/${package_name}_factories.cpp")
-    list(APPEND generated_files "${generated_path}/${package_name}_factories.hpp")
-    foreach(interface_file ${${package_name}_IDL_FILES})
-      file(TO_CMAKE_PATH "${interface_file}" interface_name)
-      get_filename_component(interface_basename "${interface_name}" NAME_WE)
-      # skipping actions and request and response messages of services
-      if(NOT "${interface_name}" MATCHES "^(msg|srv|action)/" OR "${interface_basename}" MATCHES "_(Request|Response)$")
-        continue()
-      endif()
-      string(REPLACE "/" "__" interface_name "${interface_name}")
-      get_filename_component(interface_name "${interface_name}" NAME_WE)
-      list(APPEND generated_files "${generated_path}/${package_name}__${interface_name}__factories.cpp")
-    endforeach()
-  endif()
-endforeach()
 
 set(target_dependencies
   "bin/ros1_bridge_generate_factories"
@@ -201,7 +174,6 @@ set(target_dependencies
   "ros1_bridge/__init__.py")
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
 
 execute_process(
   COMMAND ${PKG_CONFIG_EXECUTABLE} --variable=prefix roscpp
@@ -219,27 +191,99 @@ message(STATUS "Setting ROS 1 Python path for script execution to: ${_ROS1_PYTHO
 set(_ROS1_PACKAGE_PATH "${_ROS1_PREFIX_PATH}/share")
 message(STATUS "Setting ROS 1 package path for script execution to: ${_ROS1_PACKAGE_PATH}")
 
+# --- Part 1: Generate global files (get_factory.cpp and get_mappings.cpp) ---
+set(global_generated_files
+  "${generated_path}/get_factory.cpp"
+  "${generated_path}/get_mappings.cpp"
+)
+
 add_custom_command(
-  OUTPUT ${generated_files}
-  COMMAND env 
-          # Set ROS 1 environment variables
+  OUTPUT ${global_generated_files}
+  COMMAND env
           ROS_VERSION=1
           ROS_DISTRO=one
           ROS_ROOT=${_ROS1_PREFIX_PATH}/share/ros
           ROS_ETC_DIR=${_ROS1_PREFIX_PATH}/etc/ros
           ROS_PACKAGE_PATH=${_ROS1_PACKAGE_PATH}:$ENV{ROS_PACKAGE_PATH}
           PYTHONPATH=${_ROS1_PYTHON_PATH}:$ENV{PYTHONPATH}
-          # ---------------------------
           ${Python3_EXECUTABLE}
   ARGS bin/ros1_bridge_generate_factories
     --output-path "${generated_path}" --template-dir resource
   DEPENDS ${target_dependencies}
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  COMMENT "Generating factories for interface types")
+  COMMENT "Generating global factory files"
+)
+
+# Initialize the list of all generated sources with global files
+set(ros1_bridge_GENERATED_SOURCES ${global_generated_files})
+
+# --- Part 2: Generate per-package files in parallel ---
+ament_index_get_resources(ros2_interface_packages "rosidl_interfaces")
+set(actionlib_msgs_DEPRECATED_QUIET TRUE)
+
+foreach(package_name ${ros2_interface_packages})
+  find_package(${package_name} QUIET REQUIRED)
+  message(STATUS "Found ${package_name}: ${${package_name}_VERSION} (${${package_name}_DIR})")
+
+  if("${package_name}" STREQUAL "builtin_interfaces")
+    continue()
+  endif()
+
+  # Create a list of files this package will generate
+  set(package_generated_files "")
+  list(APPEND package_generated_files "${generated_path}/${package_name}_factories.cpp")
+  list(APPEND package_generated_files "${generated_path}/${package_name}_factories.hpp")
+
+  foreach(interface_file ${${package_name}_IDL_FILES})
+    file(TO_CMAKE_PATH "${interface_file}" interface_name)
+    get_filename_component(interface_basename "${interface_name}" NAME_WE)
+    # skipping actions and request and response messages of services
+    if(NOT "${interface_name}" MATCHES "^(msg|srv|action)/" OR "${interface_basename}" MATCHES "_(Request|Response)$")
+      continue()
+    endif()
+    string(REPLACE "/" "__" interface_name "${interface_name}")
+    get_filename_component(interface_name "${interface_name}" NAME_WE)
+    list(APPEND package_generated_files "${generated_path}/${package_name}__${interface_name}__factories.cpp")
+  endforeach()
+
+  # Create a parallel generation target for this package
+  # First create the command
+  add_custom_command(
+    OUTPUT ${package_generated_files}
+    COMMAND env
+            ROS_VERSION=1
+            ROS_DISTRO=one
+            ROS_ROOT=${_ROS1_PREFIX_PATH}/share/ros
+            ROS_ETC_DIR=${_ROS1_PREFIX_PATH}/etc/ros
+            ROS_PACKAGE_PATH=${_ROS1_PACKAGE_PATH}:$ENV{ROS_PACKAGE_PATH}
+            PYTHONPATH=${_ROS1_PYTHON_PATH}:$ENV{PYTHONPATH}
+            ${Python3_EXECUTABLE}
+    ARGS bin/ros1_bridge_generate_factories
+         --output-path "${generated_path}" --template-dir resource
+         --ros2-package-name ${package_name}
+    DEPENDS ${global_generated_files}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Generating factories for ${package_name}"
+  )
+
+  # Create a phony target to allow parallel execution
+  add_custom_target(generate_${package_name}_factories
+    DEPENDS ${package_generated_files}
+  )
+
+  # Add this package's generated files to the master list
+  list(APPEND ros1_bridge_GENERATED_SOURCES ${package_generated_files})
+  list(APPEND ros1_bridge_GENERATION_TARGETS generate_${package_name}_factories)
+endforeach()
+
+# Create a target that depends on all generation targets
+add_custom_target(generate_all_factories
+  DEPENDS ${ros1_bridge_GENERATION_TARGETS}
+)
 
 if(NOT WIN32)
   # ignore warning in ROS 1 message headers
-  set_source_files_properties(${generated_files}
+  set_source_files_properties(${ros1_bridge_GENERATED_SOURCES}
     PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter")
 endif()
 
@@ -291,14 +335,15 @@ add_library(${PROJECT_NAME} SHARED
   "src/convert_builtin_interfaces.cpp"
   "src/bridge.cpp"
   ${controller_state_adapter_src}
-  ${generated_files})
+  ${ros1_bridge_GENERATED_SOURCES})
 ament_target_dependencies(${PROJECT_NAME}
   ${prefixed_ros1_message_packages}
   ${ros2_interface_packages}
   "rclcpp"
   "rclcpp_action"
   "ros1_roscpp"
-  "ros1_std_msgs")
+  "ros1_std_msgs"
+  "ros1_actionlib")
 
 install(TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION lib
