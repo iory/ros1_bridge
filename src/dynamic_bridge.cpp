@@ -568,6 +568,7 @@ void update_bridge(
         it = service_bridges_2_to_1.erase(it);
       } catch (std::runtime_error & e) {
         fprintf(stderr, "There was an error while removing 2 to 1 bridge: %s\n", e.what());
+        ++it;
       }
     } else {
       ++it;
@@ -583,6 +584,7 @@ void update_bridge(
         it = service_bridges_1_to_2.erase(it);
       } catch (std::runtime_error & e) {
         fprintf(stderr, "There was an error while removing 1 to 2 bridge: %s\n", e.what());
+        ++it;
       }
     } else {
       ++it;
@@ -669,11 +671,13 @@ void update_bridge(
     if (ros1_action_servers.find(it->first) == ros1_action_servers.end()) {
       printf("Removed 2 to 1 bridge for action %s\n", it->first.data());
       try {
-        it->second->shutdown();
-        it->second.reset();
+        if (it->second) {
+          it->second->shutdown();
+        }
         it = action_bridges_2_to_1.erase(it);
       } catch (std::runtime_error & e) {
         fprintf(stderr, "There was an error while removing 2 to 1 bridge: %s\n", e.what());
+        ++it;
       }
     } else {
       ++it;
@@ -685,11 +689,13 @@ void update_bridge(
     if (ros2_action_servers.find(it->first) == ros2_action_servers.end()) {
       printf("Removed 1 to 2 bridge for action %s\n", it->first.data());
       try {
-        it->second->shutdown();
-        it->second.reset();
+        if (it->second) {
+          it->second->shutdown();
+        }
         it = action_bridges_1_to_2.erase(it);
       } catch (std::runtime_error & e) {
         fprintf(stderr, "There was an error while removing 1 to 2 bridge: %s\n", e.what());
+        ++it;
       }
     } else {
       ++it;
