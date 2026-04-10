@@ -1,0 +1,44 @@
+# Example configuration file for dynamic_bridge
+# This file allows you to selectively bridge topics, services, and actions
+# between ROS 1 and ROS 2.
+
+# Topics to bridge
+# Each topic must specify:
+#   - name: Topic name (must match on both ROS 1 and ROS 2 sides)
+#   - direction: Bridge direction - "bidirectional", "1to2", or "2to1"
+topics:
+  - name: /chatter
+    direction: bidirectional
+
+  - name: /tf
+    direction: bidirectional
+
+  - name: /camera/image_raw
+    direction: 2to1  # ROS 2 to ROS 1 only
+
+  - name: /cmd_vel
+    direction: 1to2  # ROS 1 to ROS 2 only
+
+# Services to bridge
+# Services are unidirectional, so you must specify the direction
+services:
+  # Services from ROS 1 to ROS 2
+  1to2:
+    - /add_two_ints
+    - /trigger
+
+  # Services from ROS 2 to ROS 1
+  2to1:
+    - /get_planning_scene
+
+# Actions to bridge
+# Like services, actions are also unidirectional
+actions:
+  # Actions from ROS 1 to ROS 2
+  1to2:
+    - /follow_joint_trajectory
+    - /move_base
+
+  # Actions from ROS 2 to ROS 1
+  2to1:
+    - /fibonacci

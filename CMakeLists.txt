@@ -17,6 +17,7 @@ find_package(rclcpp REQUIRED)
 find_package(rmw_implementation_cmake REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(rclcpp_action REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # find ROS 1 packages
 set(cmake_extras_files cmake/find_ros1_package.cmake cmake/find_ros1_interface_packages.cmake)
@@ -369,7 +370,8 @@ custom_executable(dynamic_bridge
   ROS1_DEPENDENCIES
   TARGET_DEPENDENCIES ${ros2_interface_packages})
 target_link_libraries(dynamic_bridge
-  ${PROJECT_NAME})
+  ${PROJECT_NAME}
+  yaml-cpp)
 
 if(TEST_ROS1_BRIDGE)
   custom_executable(test_ros2_client_cpp "test/test_ros2_client.cpp")
