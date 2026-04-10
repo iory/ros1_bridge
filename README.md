@@ -165,6 +165,33 @@ colcon build --symlink-install --packages-select ros1_bridge --cmake-force-confi
 
 *Note:* If you are building on a memory constrained system you might want to limit the number of parallel jobs by setting e.g. the environment variable `MAKEFLAGS=-j1`.
 
+### Building a Debian package
+
+You can also build a `.deb` package for easier deployment. This requires
+[bloom](https://wiki.ros.org/bloom) and the usual Debian build tooling:
+
+```bash
+# Source both ROS 1 (or ROS-O) and ROS 2 environments
+source /opt/ros/one/setup.bash    # or /opt/ros/noetic/setup.bash
+source /opt/ros/jazzy/setup.bash  # your ROS 2 distro
+
+# Generate the debian/ directory
+bloom-generate rosdebian --ros-distro jazzy
+echo "3.0 (native)" > debian/source/format
+
+# (Optional) Enable parallel builds – replace 6 with your preferred job count
+JOBS=6
+sed -i "s/dh \$@ /dh \$@ --parallel --max-parallel=${JOBS} /" debian/rules
+sed -i "s/dh_auto_build$/CMAKE_BUILD_PARALLEL_LEVEL=${JOBS} dh_auto_build -- -j${JOBS}/" debian/rules
+
+export DEB_BUILD_OPTIONS="parallel=${JOBS} nocheck"
+export CMAKE_BUILD_PARALLEL_LEVEL=${JOBS}
+export MAKEFLAGS="-j${JOBS}"
+
+# Build the package
+debuild -j${JOBS} -us -uc
+```
+
 
 ## Example 1: run the bridge and the example talker and listener
 
