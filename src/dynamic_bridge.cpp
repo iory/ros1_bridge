@@ -19,6 +19,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 #include <boost/algorithm/string/predicate.hpp>   // NOLINT
@@ -85,6 +86,22 @@ BridgeConfig load_config_file(const std::string & config_path)
 {
   BridgeConfig config;
 
+  // Check if file exists and provide helpful error message
+  std::ifstream file_check(config_path);
+  if (!file_check.good()) {
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+      fprintf(stderr,
+        "ERROR: Config file not found: '%s'\n"
+        "  Current directory: %s\n"
+        "  Hint: Use absolute path or run from the directory containing the config file\n",
+        config_path.c_str(), cwd);
+    } else {
+      fprintf(stderr, "ERROR: Config file not found: '%s'\n", config_path.c_str());
+    }
+    return config;
+  }
+
   try {
     YAML::Node yaml_config = YAML::LoadFile(config_path);
 
@@ -148,7 +165,8 @@ BridgeConfig load_config_file(const std::string & config_path)
       config.actions_1to2.size(), config.actions_2to1.size());
 
   } catch (const YAML::Exception & e) {
-    fprintf(stderr, "Failed to load config file '%s': %s\n", config_path.c_str(), e.what());
+    fprintf(stderr, "ERROR: Failed to parse YAML config file '%s': %s\n",
+      config_path.c_str(), e.what());
   }
 
   return config;
@@ -1210,13 +1228,33 @@ int main(int argc, char * argv[])
     config = load_config_file(config_file_path);
   }
 
-  // ROS 2 node
+  // ROS 2 node (initialize first as it doesn't require a master)
   rclcpp::init(argc, argv);
-
   auto ros2_node = rclcpp::Node::make_shared("ros_bridge");
 
-  // ROS 1 node
-  ros::init(argc, argv, "ros_bridge");
+  // ROS 1 node - wait for roscore before initializing to avoid XML-RPC spam
+  printf("Checking for ROS 1 master (roscore)...\n");
+  ros::init(argc, argv, "ros_bridge", ros::init_options::NoSigintHandler);
+
+  // Wait for ROS master with clean output
+  bool master_available = false;
+  while (!master_available && rclcpp::ok()) {
+    if (ros::master::check()) {
+      master_available = true;
+      printf("ROS 1 master found, initializing bridge...\n");
+    } else {
+      if (!master_available) {
+        printf("Waiting for ROS 1 master (roscore)...\n");
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  }
+
+  if (!rclcpp::ok()) {
+    printf("Shutting down before initialization complete\n");
+    return 0;
+  }
+
   ros::NodeHandle ros1_node;
 
   // mapping of available topic names to type names
