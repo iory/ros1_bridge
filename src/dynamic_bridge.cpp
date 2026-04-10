@@ -450,6 +450,19 @@ void update_bridge(
     }
   }
 
+  // Blacklist for topics that should NEVER be bridged
+  // These topics cause errors, infinite loops, or unnecessary overhead
+  static const std::set<std::string> topic_blacklist = {
+    "/rosout",           // ROS 1 logging - no type mapping defined
+    "/rosout_agg",       // ROS 1 aggregated logs - no type mapping defined
+    "/parameter_events"  // ROS 2 internal parameter events
+  };
+
+  // Helper lambda to check if topic is blacklisted
+  auto is_blacklisted = [&topic_blacklist](const std::string & topic_name) {
+    return topic_blacklist.find(topic_name) != topic_blacklist.end();
+  };
+
   // Helper lambda to check if topic is allowed based on config
   auto is_topic_allowed_1to2 = [&config](const std::string & topic_name) {
     if (!config.filter_enabled) {
@@ -485,6 +498,11 @@ void update_bridge(
   for (auto ros1_publisher : ros1_publishers) {
     // identify topics available as ROS 1 publishers as well as ROS 2 subscribers
     auto topic_name = ros1_publisher.first;
+
+    // FIRST: Check blacklist (hard-coded exclusions)
+    if (is_blacklisted(topic_name)) {
+      continue;
+    }
 
     // Check if topic is allowed by config
     if (!is_topic_allowed_1to2(topic_name)) {
@@ -560,6 +578,11 @@ void update_bridge(
   for (auto ros2_publisher : ros2_publishers) {
     // identify topics available as ROS 1 subscribers as well as ROS 2 publishers
     auto topic_name = ros2_publisher.first;
+
+    // FIRST: Check blacklist (hard-coded exclusions)
+    if (is_blacklisted(topic_name)) {
+      continue;
+    }
 
     // Check if topic is allowed by config
     if (!is_topic_allowed_2to1(topic_name)) {
