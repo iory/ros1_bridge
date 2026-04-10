@@ -342,16 +342,28 @@ custom_executable(simple_bridge "src/simple_bridge.cpp"
 # Check if controller_manager_msgs is available in ROS1
 find_ros1_package(controller_manager_msgs)
 if(ros1_controller_manager_msgs_FOUND)
-  set(controller_state_adapter_src "src/controller_manager_msgs_controller_state_adapter.cpp")
+  set(controller_manager_msgs_adapters_src
+    "src/controller_manager_msgs_controller_state_adapter.cpp"
+    "src/controller_manager_msgs_switch_controller_adapter.cpp")
 else()
-  set(controller_state_adapter_src "")
+  set(controller_manager_msgs_adapters_src "")
+endif()
+
+# Check if control_msgs is available in ROS1
+find_ros1_package(control_msgs)
+if(ros1_control_msgs_FOUND)
+  set(control_msgs_adapters_src
+    "src/control_msgs_joint_trajectory_controller_state_adapter.cpp")
+else()
+  set(control_msgs_adapters_src "")
 endif()
 
 add_library(${PROJECT_NAME} SHARED
   "src/builtin_interfaces_factories.cpp"
   "src/convert_builtin_interfaces.cpp"
   "src/bridge.cpp"
-  ${controller_state_adapter_src}
+  ${controller_manager_msgs_adapters_src}
+  ${control_msgs_adapters_src}
   ${ros1_bridge_GENERATED_SOURCES})
 ament_target_dependencies(${PROJECT_NAME}
   ${prefixed_ros1_message_packages}
@@ -504,6 +516,6 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 install(
-  FILES action_mappings.yaml
+  FILES action_mappings.yaml service_mappings.yaml
   DESTINATION share/${PROJECT_NAME}
 )

@@ -40,11 +40,26 @@ from rosidl_parser.definition import UnboundedString
 @[for service in mapped_services]@
 #include <@(service["ros1_package"])/@(service["ros1_name"]).h>
 @[end for]@
+@# Custom service includes
+@[if ros2_package_name == "controller_manager_msgs" and interface.message_name == "SwitchController"]@
+#include <controller_manager_msgs/SwitchController.h>
+@[end if]@
 
 // include ROS 2 services
 @[for service in mapped_services]@
 #include <@(service["ros2_package"])/srv/@(camel_case_to_lower_case_underscore(service["ros2_name"])).hpp>
 @[end for]@
+@# Custom service includes
+@[if ros2_package_name == "controller_manager_msgs" and interface.message_name == "SwitchController"]@
+#include <controller_manager_msgs/srv/switch_controller.hpp>
+@[end if]@
+
+@# Custom message includes for incompatible messages
+@[if ros2_package_name == "control_msgs" and interface.message_name == "JointTrajectoryControllerState"]@
+// Custom includes for JointTrajectoryControllerState
+#include <control_msgs/JointTrajectoryControllerState.h>
+#include <control_msgs/msg/joint_trajectory_controller_state.hpp>
+@[end if]@
 
 // include ROS 1 actions
 @[for action in mapped_actions]@
@@ -82,6 +97,21 @@ get_factory_@(ros2_package_name)__@(interface_type)__@(interface.message_name)(c
     >("@(m.ros1_msg.package_name)/@(m.ros1_msg.message_name)", ros2_type_name);
   }
 @[end for]@
+@# Custom message factories for incompatible messages
+@[if ros2_package_name == "control_msgs" and interface.message_name == "JointTrajectoryControllerState"]@
+  // Custom factory for JointTrajectoryControllerState (has incompatible field names)
+  if (
+    (ros1_type_name == "control_msgs/JointTrajectoryControllerState" || ros1_type_name == "") &&
+    ros2_type_name == "control_msgs/msg/JointTrajectoryControllerState")
+  {
+    return std::make_shared<
+      Factory<
+        control_msgs::JointTrajectoryControllerState,
+        control_msgs::msg::JointTrajectoryControllerState
+      >
+    >("control_msgs/JointTrajectoryControllerState", ros2_type_name);
+  }
+@[end if]@
   return std::shared_ptr<FactoryInterface>();
 }
 
@@ -111,6 +141,26 @@ get_service_factory_@(ros2_package_name)__@(interface_type)__@(interface.message
     >);
   }
 @[end for]@
+@# Custom service mappings with incompatible field names
+@[if ros2_package_name == "controller_manager_msgs" and interface.message_name == "SwitchController"]@
+  // Custom mapping for SwitchController (has incompatible field names)
+  if (
+    (
+      ros_id == "ros1" &&
+      package_name == "controller_manager_msgs" &&
+      service_name == "SwitchController"
+    ) || (
+      ros_id == "ros2" &&
+      package_name == "controller_manager_msgs" &&
+      service_name == "srv/SwitchController"
+    )
+  ) {
+    return std::unique_ptr<ServiceFactoryInterface>(new ServiceFactory<
+      controller_manager_msgs::SwitchController,
+      controller_manager_msgs::srv::SwitchController
+    >);
+  }
+@[end if]@
   return nullptr;
 }
 @
