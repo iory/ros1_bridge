@@ -1238,6 +1238,10 @@ int main(int argc, char * argv[])
   std::map<std::string, std::unique_ptr<ros1_bridge::ActionFactoryInterface>> action_bridges_1_to_2;
   std::map<std::string, std::unique_ptr<ros1_bridge::ActionFactoryInterface>> action_bridges_2_to_1;
 
+  // Track ROS 1 master connection state for clean logging
+  static bool ros1_master_connected = false;
+  static bool ros1_master_first_check = true;
+
   // setup polling of ROS 1 master
   auto ros1_poll = [
     &ros1_node, ros2_node,
@@ -1261,8 +1265,19 @@ int main(int argc, char * argv[])
       XmlRpc::XmlRpcValue args, result, payload;
       args[0] = ros::this_node::getName();
       if (!ros::master::execute("getSystemState", args, result, payload, true)) {
-        fprintf(stderr, "failed to get system state from ROS 1 master\n");
+        // Handle connection failure with clean logging
+        if (ros1_master_connected || ros1_master_first_check) {
+          printf("Waiting for ROS 1 master (roscore)...\n");
+          ros1_master_connected = false;
+          ros1_master_first_check = false;
+        }
         return;
+      }
+
+      // Connection successful - log if this is a reconnection
+      if (!ros1_master_connected) {
+        printf("Connected to ROS 1 master\n");
+        ros1_master_connected = true;
       }
       // check publishers
       if (payload.size() >= 1) {
@@ -1314,7 +1329,8 @@ int main(int argc, char * argv[])
       ros::master::V_TopicInfo topics;
       bool success = ros::master::getTopics(topics);
       if (!success) {
-        fprintf(stderr, "failed to poll ROS 1 master\n");
+        // Connection lost - update state (message already printed above)
+        ros1_master_connected = false;
         return;
       }
 
