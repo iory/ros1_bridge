@@ -1306,6 +1306,10 @@ int main(int argc, char * argv[])
         ros1_action_clients = active_ros1_action_clients;
       }
 
+      // Commented out to prevent Wrong-Thread Destruction
+      // update_bridge must only be called from ROS 2 thread to safely destroy rclcpp objects
+      // ROS 1 thread should only update ROS 1 information (publishers, subscribers, services, actions)
+      /*
       update_bridge(
         ros1_node, ros2_node,
         ros1_publishers, ros1_subscribers,
@@ -1317,6 +1321,7 @@ int main(int argc, char * argv[])
         action_bridges_1_to_2, action_bridges_2_to_1,
         bridge_all_1to2_topics, bridge_all_2to1_topics,
         config);
+      */
     };
 
   auto ros1_poll_timer = ros1_node.createTimer(ros::Duration(1.0), ros1_poll);
