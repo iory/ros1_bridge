@@ -416,6 +416,9 @@ void ServiceFactory<
 @[        if field["basic"]]@
 @[           if field["ros2"]["type"].startswith("builtin_interfaces") ]@
   ros1_bridge::convert_@(frm)_to_@(to)(@(field["ros" + frm]["name"])@(frm), @(field["ros" + to]["name"])@(to));
+@[            elif field.get("static_array", False)]@
+  // static array: use std::copy for boost::array <-> std::array compatibility
+  std::copy(@(field["ros" + frm]["name"])@(frm).begin(), @(field["ros" + frm]["name"])@(frm).end(), @(field["ros" + to]["name"])@(to).begin());
 @[            else]@
   @(field["ros" + to]["name"])@(to) = @(field["ros" + frm]["name"])@(frm);
 @[            end if]@
@@ -480,6 +483,9 @@ void ActionFactory_@(frm_)_@(to_)<
 @[      if field["basic"]]@
 @[        if field["ros2"]["type"].startswith("builtin_interfaces") ]@
     ros1_bridge::convert_@(frm)_to_@(to)(@(field["ros" + frm]["name"])@(frm), @(field["ros" + to]["name"])@(to));
+@[        elif field.get("static_array", False)]@
+    // static array: use std::copy for boost::array <-> std::array compatibility
+    std::copy(@(field["ros" + frm]["name"])@(frm).begin(), @(field["ros" + frm]["name"])@(frm).end(), @(field["ros" + to]["name"])@(to).begin());
 @[        else]@
     @(field["ros" + to]["name"])@(to) = @(field["ros" + frm]["name"])@(frm);
 @[        end if]@

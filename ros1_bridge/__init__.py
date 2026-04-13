@@ -893,6 +893,7 @@ def determine_common_services(
                 output[direction].append({
                     'basic': False if '/' in ros1_type else True,
                     'array': True if '[]' in ros1_type else False,
+                    'static_array': bool(re.search(r'\[\d+\]', ros1_type)),
                     'ros1': {
                         'name': ros1_name,
                         'type': ros1_type.rstrip('[]'),
@@ -1021,6 +1022,7 @@ def determine_common_actions(
                     output[direction].append({
                         'basic': False if '/' in ros1_type else True,
                         'array': True if '[]' in ros1_type else False,
+                        'static_array': bool(re.search(r'\[\d+\]', ros1_type)),
                         'ros1': {
                             'name': ros1_name,
                             'type': ros1_type.rstrip('[]'),
@@ -1060,6 +1062,7 @@ def determine_common_actions(
                 output[direction].append({
                     'basic': False if '/' in ros1_type else True,
                     'array': True if '[]' in ros1_type else False,
+                    'static_array': bool(re.search(r'\[\d+\]', ros1_type)),
                     'ros1': {
                         'name': ros1_name,
                         'type': ros1_type.rstrip('[]'),
